@@ -1,100 +1,163 @@
 [CmdletBinding()]
 param(
     [string]$DefaultHost = '127.0.0.1',
-    [ValidateRange(1, 65535)]
-    [int]$DefaultPort = 10808
+    [ValidateRange(1, 65535)][int]$DefaultPort = 10808,
+    [string]$V2rayNRoot
 )
 
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'ProxySupport.ps1')
 
-function Normalize-ListenHost {
-    param([AllowNull()][string]$HostValue)
+function New-ProxyCandidate {
+    param(
+        [AllowNull()][string]$Address,
+        [AllowNull()]$Port,
+        [AllowNull()][string]$Kind,
+        [string]$Source
+    )
 
-    if ([string]::IsNullOrWhiteSpace($HostValue) -or
-        $HostValue -in @('0.0.0.0', '::', '[::]')) {
-        return '127.0.0.1'
+    $normalizedAddress = ConvertTo-LoopbackAddress $Address
+    if (-not $normalizedAddress) {
+        return $null
     }
 
-    return $HostValue.Trim('[', ']')
+    try {
+        $normalizedPort = [int]$Port
+    } catch {
+        return $null
+    }
+
+    if ($normalizedPort -lt 1 -or $normalizedPort -gt 65535) {
+        return $null
+    }
+
+    $normalizedKind = if ($Kind) { $Kind.ToLowerInvariant() } else { 'socks' }
+    if ($normalizedKind -notin @('socks', 'mixed')) {
+        return $null
+    }
+
+    [pscustomobject]@{
+        Host = $normalizedAddress
+        Port = $normalizedPort
+        Kind = $normalizedKind
+        UriHost = Format-ProxyUriHost $normalizedAddress
+        Source = $Source
+    }
 }
 
-function Get-RuntimeInbound {
+function Get-RuntimeCandidates {
     param([string]$ConfigPath)
 
     if (-not (Test-Path -LiteralPath $ConfigPath)) {
-        return $null
+        return
     }
 
     try {
         $config = Get-Content -LiteralPath $ConfigPath -Raw | ConvertFrom-Json
         foreach ($inbound in @($config.inbounds)) {
             $kind = if ($inbound.type) { $inbound.type } else { $inbound.protocol }
-            if ($kind -notin @('socks', 'mixed')) {
-                continue
-            }
-
             $port = if ($inbound.listen_port) { $inbound.listen_port } else { $inbound.port }
-            if ($port -and [int]$port -ge 1 -and [int]$port -le 65535) {
-                return [pscustomobject]@{
-                    Host = Normalize-ListenHost $inbound.listen
-                    Port = [int]$port
-                }
-            }
+            New-ProxyCandidate -Address $inbound.listen -Port $port -Kind $kind -Source 'v2rayN runtime config'
         }
     } catch {
-        return $null
+        return
     }
-
-    return $null
 }
 
-function Get-GuiInbound {
+function Get-GuiCandidates {
     param([string]$ConfigPath)
 
     if (-not (Test-Path -LiteralPath $ConfigPath)) {
-        return $null
+        return
     }
 
     try {
         $config = Get-Content -LiteralPath $ConfigPath -Raw | ConvertFrom-Json
         foreach ($inbound in @($config.Inbound)) {
-            if ($inbound.Protocol -notin @('socks', 'mixed')) {
-                continue
-            }
-
-            if ($inbound.LocalPort -and [int]$inbound.LocalPort -ge 1 -and [int]$inbound.LocalPort -le 65535) {
-                return [pscustomobject]@{
-                    Host = $DefaultHost
-                    Port = [int]$inbound.LocalPort
-                }
-            }
+            New-ProxyCandidate -Address $DefaultHost -Port $inbound.LocalPort -Kind $inbound.Protocol -Source 'v2rayN GUI config'
         }
     } catch {
+        return
+    }
+}
+
+function Find-V2rayNRoot {
+    param([string]$ExecutablePath)
+
+    if (-not $ExecutablePath) {
         return $null
+    }
+
+    $current = Split-Path -Parent $ExecutablePath
+    for ($depth = 0; $depth -lt 6 -and $current; $depth++) {
+        if ((Test-Path -LiteralPath (Join-Path $current 'v2rayN.exe')) -or
+            (Test-Path -LiteralPath (Join-Path $current 'guiConfigs')) -or
+            (Test-Path -LiteralPath (Join-Path $current 'binConfigs'))) {
+            return $current
+        }
+
+        $parent = Split-Path -Parent $current
+        if ($parent -eq $current) {
+            break
+        }
+        $current = $parent
     }
 
     return $null
 }
 
-$v2rayNProcess = Get-Process v2rayN -ErrorAction SilentlyContinue |
-    Where-Object { $_.Path } |
-    Sort-Object StartTime -Descending |
-    Select-Object -First 1
-
-if ($v2rayNProcess) {
-    $v2rayNRoot = Split-Path -Parent $v2rayNProcess.Path
-
-    $runtime = Get-RuntimeInbound (Join-Path $v2rayNRoot 'binConfigs\config.json')
-    if ($runtime) {
-        '{0}|{1}|v2rayN runtime config' -f $runtime.Host, $runtime.Port
-        exit 0
+function Get-DetectedRoots {
+    if ($V2rayNRoot) {
+        if (Test-Path -LiteralPath $V2rayNRoot) {
+            return (Resolve-Path -LiteralPath $V2rayNRoot).Path
+        }
+        return
     }
 
-    $gui = Get-GuiInbound (Join-Path $v2rayNRoot 'guiConfigs\guiNConfig.json')
-    if ($gui) {
-        '{0}|{1}|v2rayN GUI config' -f $gui.Host, $gui.Port
-        exit 0
+    $roots = [Collections.Generic.List[string]]::new()
+    foreach ($processName in @('v2rayN', 'sing-box', 'xray', 'mihomo')) {
+        foreach ($process in @(Get-Process $processName -ErrorAction SilentlyContinue | Sort-Object StartTime -Descending)) {
+            $path = $null
+            try { $path = $process.Path } catch { continue }
+            $root = Find-V2rayNRoot $path
+            if ($root -and -not $roots.Contains($root)) {
+                $roots.Add($root)
+            }
+        }
+    }
+
+    return $roots
+}
+
+$candidates = [Collections.Generic.List[object]]::new()
+foreach ($root in @(Get-DetectedRoots)) {
+    foreach ($candidate in @(Get-RuntimeCandidates (Join-Path $root 'binConfigs\config.json'))) {
+        if ($candidate) { $candidates.Add($candidate) }
+    }
+    foreach ($candidate in @(Get-GuiCandidates (Join-Path $root 'guiConfigs\guiNConfig.json'))) {
+        if ($candidate) { $candidates.Add($candidate) }
     }
 }
 
-'{0}|{1}|default fallback' -f $DefaultHost, $DefaultPort
+$uniqueCandidates = @($candidates | Group-Object Host, Port, Kind | ForEach-Object { $_.Group[0] })
+$selected = $uniqueCandidates | Where-Object {
+    Test-Socks5Handshake -ProxyHost $_.Host -Port $_.Port -TimeoutMilliseconds 700
+} | Select-Object -First 1
+
+if ($selected) {
+    $selected.Kind = if (Test-HttpProxyHandshake -ProxyHost $selected.Host -Port $selected.Port) { 'mixed' } else { 'socks' }
+    $selected.Source += ' (active)'
+} elseif ($uniqueCandidates.Count -gt 0) {
+    $selected = $uniqueCandidates[0]
+    $selected.Source += ' (inactive)'
+} else {
+    $fallbackHost = ConvertTo-LoopbackAddress $DefaultHost
+    if (-not $fallbackHost) { $fallbackHost = '127.0.0.1' }
+    $selected = New-ProxyCandidate -Address $fallbackHost -Port $DefaultPort -Kind 'socks' -Source 'default fallback'
+    if (Test-Socks5Handshake -ProxyHost $selected.Host -Port $selected.Port -TimeoutMilliseconds 700) {
+        $selected.Kind = if (Test-HttpProxyHandshake -ProxyHost $selected.Host -Port $selected.Port) { 'mixed' } else { 'socks' }
+        $selected.Source += ' (active)'
+    }
+}
+
+'{0}|{1}|{2}|{3}|{4}' -f $selected.Host, $selected.Port, $selected.Kind, $selected.UriHost, $selected.Source

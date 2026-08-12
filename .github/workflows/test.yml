@@ -1,0 +1,31 @@
+name: Test launcher
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Parse PowerShell scripts
+        shell: powershell
+        run: |
+          $failed = $false
+          Get-ChildItem -Recurse -Filter *.ps1 | ForEach-Object {
+            $tokens = $null
+            $errors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$tokens, [ref]$errors)
+            if ($errors) {
+              $errors | Format-List
+              $failed = $true
+            }
+          }
+          if ($failed) { throw 'PowerShell parse errors found.' }
+      - name: Test proxy detection and SOCKS5 handshake
+        shell: powershell
+        run: .\tests\Test-ProxyScripts.ps1
