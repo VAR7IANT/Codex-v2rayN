@@ -139,7 +139,12 @@ foreach ($root in @(Get-DetectedRoots)) {
     }
 }
 
-$uniqueCandidates = @($candidates | Group-Object Host, Port, Kind | ForEach-Object { $_.Group[0] })
+$fallbackHost = ConvertTo-LoopbackAddress $DefaultHost
+if (-not $fallbackHost) { $fallbackHost = '127.0.0.1' }
+$fallback = New-ProxyCandidate -Address $fallbackHost -Port $DefaultPort -Kind 'socks' -Source 'default fallback'
+$candidates.Add($fallback)
+
+$uniqueCandidates = @($candidates | Group-Object Host, Port | ForEach-Object { $_.Group[0] })
 $selected = $uniqueCandidates | Where-Object {
     Test-Socks5Handshake -ProxyHost $_.Host -Port $_.Port -TimeoutMilliseconds 700
 } | Select-Object -First 1
@@ -150,14 +155,6 @@ if ($selected) {
 } elseif ($uniqueCandidates.Count -gt 0) {
     $selected = $uniqueCandidates[0]
     $selected.Source += ' (inactive)'
-} else {
-    $fallbackHost = ConvertTo-LoopbackAddress $DefaultHost
-    if (-not $fallbackHost) { $fallbackHost = '127.0.0.1' }
-    $selected = New-ProxyCandidate -Address $fallbackHost -Port $DefaultPort -Kind 'socks' -Source 'default fallback'
-    if (Test-Socks5Handshake -ProxyHost $selected.Host -Port $selected.Port -TimeoutMilliseconds 700) {
-        $selected.Kind = if (Test-HttpProxyHandshake -ProxyHost $selected.Host -Port $selected.Port) { 'mixed' } else { 'socks' }
-        $selected.Source += ' (active)'
-    }
 }
 
 '{0}|{1}|{2}|{3}|{4}' -f $selected.Host, $selected.Port, $selected.Kind, $selected.UriHost, $selected.Source

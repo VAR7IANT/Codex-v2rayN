@@ -25,6 +25,7 @@ function Write-JsonConfig {
 
 $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ('CodexGatewayTests-' + [guid]::NewGuid().ToString('N'))
 $serverProcess = $null
+$authServerProcess = $null
 New-Item -ItemType Directory -Path $tempRoot | Out-Null
 
 try {
@@ -34,7 +35,9 @@ try {
     Assert-Equal $null (ConvertTo-LoopbackAddress '192.168.1.20') 'Non-loopback address was accepted.'
 
     $activePort = Get-FreePort
-    $closedPort = Get-FreePort
+    do {
+        $closedPort = Get-FreePort
+    } while ($closedPort -eq $activePort)
     $serverScript = Join-Path $PSScriptRoot 'Mock-Socks5Server.ps1'
     $serverProcess = Start-Process -FilePath (Join-Path $PSHOME 'powershell.exe') -ArgumentList @(
         '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$serverScript`"", '-Port', $activePort, '-MaxConnections', 10
@@ -50,6 +53,26 @@ try {
     }
     Assert-Equal $true $ready 'Mock SOCKS5 server did not start.'
     Assert-Equal $true (Test-HttpProxyHandshake -ProxyHost '127.0.0.1' -Port $activePort -Verbose) 'Mock mixed HTTP capability did not start.'
+
+    $authPort = Get-FreePort
+    $authReadyPath = Join-Path $tempRoot 'auth-server.ready'
+    $authServerProcess = Start-Process -FilePath (Join-Path $PSHOME 'powershell.exe') -ArgumentList @(
+        '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$serverScript`"", '-Port', $authPort,
+        '-MaxConnections', 2, '-AuthenticationMethod', 2, '-ReadyPath', "`"$authReadyPath`""
+    ) -WindowStyle Hidden -PassThru
+    for ($attempt = 0; $attempt -lt 30 -and -not (Test-Path -LiteralPath $authReadyPath); $attempt++) {
+        Start-Sleep -Milliseconds 100
+    }
+    Assert-Equal $true (Test-Path -LiteralPath $authReadyPath) 'Authentication mock server did not start.'
+    Assert-Equal $false (Test-Socks5Handshake -ProxyHost '127.0.0.1' -Port $authPort) 'Unsupported SOCKS5 authentication method was accepted.'
+    try {
+        Test-HttpsThroughSocks5 -ProxyHost '127.0.0.1' -Port $authPort -TargetHost 'example.com' -TimeoutMilliseconds 1000 | Out-Null
+        throw 'HTTPS probe accepted an unsupported SOCKS5 authentication method.'
+    } catch {
+        if ($_.Exception.Message -notmatch 'unsupported SOCKS5 authentication method') {
+            throw
+        }
+    }
 
     $runtimeRoot = Join-Path $tempRoot 'runtime'
     Write-JsonConfig (Join-Path $runtimeRoot 'binConfigs\config.json') @{
@@ -67,6 +90,15 @@ try {
     Assert-Equal '127.0.0.1' $parts[3] 'Resolver produced the wrong URI host.'
     if ($parts[4] -notmatch '\(active\)$') { throw 'Resolver did not label the active endpoint.' }
 
+    $fallbackRoot = Join-Path $tempRoot 'fallback'
+    Write-JsonConfig (Join-Path $fallbackRoot 'binConfigs\config.json') @{
+        inbounds = @(@{ protocol = 'socks'; listen = '127.0.0.1'; port = $closedPort })
+    }
+    $fallbackResolved = & (Join-Path $projectRoot 'Resolve-v2rayNProxy.ps1') -V2rayNRoot $fallbackRoot -DefaultPort $activePort
+    $fallbackParts = $fallbackResolved -split '\|', 5
+    Assert-Equal ([string]$activePort) $fallbackParts[1] 'Resolver did not try the active default endpoint after stale configuration.'
+    Assert-Equal 'default fallback (active)' $fallbackParts[4] 'Resolver did not report the active default fallback source.'
+
     & (Join-Path $projectRoot 'Test-ProxyEndpoint.ps1') -ProxyHost '127.0.0.1' -Port $activePort | Out-Null
     Assert-Equal $true (Test-HttpProxyHandshake -ProxyHost '127.0.0.1' -Port $activePort) 'Mixed HTTP capability was not detected.'
 
@@ -74,7 +106,7 @@ try {
     Write-JsonConfig (Join-Path $guiRoot 'guiConfigs\guiNConfig.json') @{
         Inbound = @(@{ Protocol = 'socks'; LocalPort = 23456 })
     }
-    $guiResolved = & (Join-Path $projectRoot 'Resolve-v2rayNProxy.ps1') -V2rayNRoot $guiRoot
+    $guiResolved = & (Join-Path $projectRoot 'Resolve-v2rayNProxy.ps1') -V2rayNRoot $guiRoot -DefaultPort $closedPort
     $guiParts = $guiResolved -split '\|', 5
     Assert-Equal '23456' $guiParts[1] 'GUI fallback port was not read.'
     Assert-Equal 'socks' $guiParts[2] 'GUI fallback protocol was not read.'
@@ -93,6 +125,9 @@ try {
 } finally {
     if ($serverProcess -and -not $serverProcess.HasExited) {
         Stop-Process -Id $serverProcess.Id -Force
+    }
+    if ($authServerProcess -and -not $authServerProcess.HasExited) {
+        Stop-Process -Id $authServerProcess.Id -Force
     }
     if (Test-Path -LiteralPath $tempRoot) {
         Remove-Item -LiteralPath $tempRoot -Recurse -Force

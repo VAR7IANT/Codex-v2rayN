@@ -64,7 +64,7 @@ function Test-Socks5Handshake {
             $received += $count
         }
 
-        return $response[0] -eq 5 -and $response[1] -ne 255
+        return $response[0] -eq 5 -and $response[1] -eq 0
     } catch {
         return $false
     } finally {
@@ -159,8 +159,11 @@ function Test-HttpsThroughSocks5 {
         [byte[]]$greeting = 5, 1, 0
         $stream.Write($greeting, 0, $greeting.Length)
         $greetingReply = Read-ExactProxyBytes -Stream $stream -Count 2
-        if ($greetingReply[0] -ne 5 -or $greetingReply[1] -eq 255) {
-            throw 'The endpoint rejected the SOCKS5 authentication negotiation.'
+        if ($greetingReply[0] -ne 5) {
+            throw 'The endpoint returned an invalid SOCKS5 protocol version.'
+        }
+        if ($greetingReply[1] -ne 0) {
+            throw ('The endpoint selected unsupported SOCKS5 authentication method 0x{0:X2}.' -f $greetingReply[1])
         }
 
         $hostBytes = [Text.Encoding]::ASCII.GetBytes($TargetHost)

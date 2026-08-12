@@ -1,10 +1,15 @@
 param(
     [Parameter(Mandatory)][ValidateRange(1, 65535)][int]$Port,
-    [ValidateRange(1, 100)][int]$MaxConnections = 10
+    [ValidateRange(1, 100)][int]$MaxConnections = 10,
+    [ValidateRange(0, 255)][int]$AuthenticationMethod = 0,
+    [string]$ReadyPath
 )
 
 $listener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, $Port)
 $listener.Start()
+if ($ReadyPath) {
+    New-Item -ItemType File -Path $ReadyPath -Force | Out-Null
+}
 try {
     for ($handled = 0; $handled -lt $MaxConnections; $handled++) {
         $client = $listener.AcceptTcpClient()
@@ -20,7 +25,7 @@ try {
             }
 
             if ($received -eq 3 -and $request[0] -eq 5) {
-                [byte[]]$response = 5, 0
+                [byte[]]$response = 5, [byte]$AuthenticationMethod
                 $stream.Write($response, 0, $response.Length)
             } elseif ($received -eq 3 -and $request[0] -eq 67 -and $request[1] -eq 79 -and $request[2] -eq 78) {
                 $response = [Text.Encoding]::ASCII.GetBytes("HTTP/1.1 502 Bad Gateway`r`nConnection: close`r`nContent-Length: 0`r`n`r`n")
