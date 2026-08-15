@@ -1,4 +1,4 @@
-name: macOS build and test
+name: macOS build, integration test, and package
 
 on:
   push:
@@ -6,7 +6,10 @@ on:
       - agent/macos-gpt-gateway
     paths:
       - "src/**"
+      - "tests/**"
+      - "assets/**"
       - "Install-GPT-Gateway.sh"
+      - "README.md"
       - ".github/workflows/test.yml"
   workflow_dispatch:
 
@@ -24,14 +27,16 @@ jobs:
         run: |
           chmod +x Install-GPT-Gateway.sh
           chmod +x src/gateway.zsh
+          chmod +x tests/mock_socks5.py
 
       - name: Syntax checks
         run: |
           /bin/zsh -n Install-GPT-Gateway.sh
           /bin/zsh -n src/gateway.zsh
+          python3 -m py_compile tests/mock_socks5.py
           clang -fsyntax-only -Wall -Wextra src/GPTGatewayLauncher.c
 
-      - name: Build universal native launcher
+      - name: Build verified universal native launcher
         run: |
           mkdir -p build
           clang -Os -Wall -Wextra \
@@ -39,11 +44,15 @@ jobs:
             -mmacosx-version-min=12.0 \
             src/GPTGatewayLauncher.c \
             -o build/GPTGatewayLauncher
+          chmod +x build/GPTGatewayLauncher
           codesign --force --sign - build/GPTGatewayLauncher
+          shasum -a 256 build/GPTGatewayLauncher > build/GPTGatewayLauncher.sha256
+
           file build/GPTGatewayLauncher
-          lipo -archs build/GPTGatewayLauncher
-          lipo -archs build/GPTGatewayLauncher | grep -q arm64
-          lipo -archs build/GPTGatewayLauncher | grep -q x86_64
+          ARCHS="$(lipo -archs build/GPTGatewayLauncher)"
+          echo "architectures=$ARCHS"
+          echo "$ARCHS" | grep -q arm64
+          echo "$ARCHS" | grep -q x86_64
 
       - name: Verify native Apple silicon execution
         run: |
@@ -52,12 +61,64 @@ jobs:
           echo "$SELF_TEST" | grep -q 'arch=arm64'
           echo "$SELF_TEST" | grep -q 'translated=0'
 
+      - name: Test SOCKS5 check and ChatGPT launch injection
+        run: |
+          PORT_FILE="$RUNNER_TEMP/mock-socks-port"
+          python3 tests/mock_socks5.py "$PORT_FILE" &
+          SOCKS_PID=$!
+          cleanup() {
+            kill "$SOCKS_PID" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+
+          for _ in {1..50}; do
+            [[ -s "$PORT_FILE" ]] && break
+            sleep 0.1
+          done
+          test -s "$PORT_FILE"
+          PORT="$(cat "$PORT_FILE")"
+          echo "mock SOCKS5 port=$PORT"
+
+          DUMMY_APP="$RUNNER_TEMP/FakeChatGPT"
+          CAPTURE="$RUNNER_TEMP/gateway-capture"
+          cat > "$DUMMY_APP" <<'DUMMY'
+          #!/bin/zsh
+          printenv > "${GPT_GATEWAY_TEST_CAPTURE}.env"
+          printf '%s\n' "$@" > "${GPT_GATEWAY_TEST_CAPTURE}.args"
+          sleep 4
+          DUMMY
+          chmod +x "$DUMMY_APP"
+
+          GPT_GATEWAY_APP_BIN="$DUMMY_APP" \
+          GPT_GATEWAY_PROXY_PORT="$PORT" \
+          GPT_GATEWAY_CHECK_URL="http://unit.test/" \
+          GPT_GATEWAY_SKIP_UI=1 \
+          GPT_GATEWAY_LOG_DIR="$RUNNER_TEMP/logs" \
+          /bin/zsh src/gateway.zsh --check | tee "$RUNNER_TEMP/check-output.txt"
+
+          grep -q 'GPT Gateway check passed' "$RUNNER_TEMP/check-output.txt"
+          grep -q "socks5h://127.0.0.1:$PORT" "$RUNNER_TEMP/check-output.txt"
+
+          GPT_GATEWAY_APP_BIN="$DUMMY_APP" \
+          GPT_GATEWAY_PROXY_PORT="$PORT" \
+          GPT_GATEWAY_CHECK_URL="http://unit.test/" \
+          GPT_GATEWAY_SKIP_UI=1 \
+          GPT_GATEWAY_LOG_DIR="$RUNNER_TEMP/logs" \
+          GPT_GATEWAY_TEST_CAPTURE="$CAPTURE" \
+          /bin/zsh src/gateway.zsh
+
+          test -s "$CAPTURE.env"
+          test -s "$CAPTURE.args"
+          grep -q "ALL_PROXY=socks5h://127.0.0.1:$PORT" "$CAPTURE.env"
+          grep -q -- "--proxy-server=socks5://127.0.0.1:$PORT" "$CAPTURE.args"
+          grep -q -- '--proxy-bypass-list=localhost;127.0.0.1;\[::1\]' "$CAPTURE.args"
+
       - name: Test app installation
         run: |
           TEST_ROOT="$RUNNER_TEMP/Applications"
           GPT_GATEWAY_INSTALL_ROOT="$TEST_ROOT" \
           GPT_GATEWAY_SKIP_OPEN=1 \
-          ./Install-GPT-Gateway.sh
+          /bin/zsh Install-GPT-Gateway.sh
 
           APP="$TEST_ROOT/GPT Gateway.app"
           test -x "$APP/Contents/MacOS/GPTGatewayLauncher"
@@ -65,6 +126,7 @@ jobs:
           plutil -lint "$APP/Contents/Info.plist"
           test "$(defaults read "$APP/Contents/Info" CFBundleExecutable)" = "GPTGatewayLauncher"
           test "$(defaults read "$APP/Contents/Info" LSRequiresNativeExecution)" = "1"
+          test "$(defaults read "$APP/Contents/Info" CFBundleShortVersionString)" = "2.1.0"
           lipo -archs "$APP/Contents/MacOS/GPTGatewayLauncher" | grep -q arm64
           lipo -archs "$APP/Contents/MacOS/GPTGatewayLauncher" | grep -q x86_64
           APP_SELF_TEST="$("$APP/Contents/MacOS/GPTGatewayLauncher" --native-self-test)"
@@ -73,15 +135,57 @@ jobs:
           echo "$APP_SELF_TEST" | grep -q 'translated=0'
           codesign --verify --deep --strict "$APP"
 
-      - name: Commit verified launcher
+      - name: Build versioned download package
+        run: |
+          PACKAGE_NAME="GPT-Gateway-macOS-v2.1.0"
+          STAGE="$RUNNER_TEMP/$PACKAGE_NAME"
+          rm -rf "$STAGE"
+          mkdir -p "$STAGE/build" "$STAGE/src" "$STAGE/assets" dist
+
+          cp Install-GPT-Gateway.sh README.md "$STAGE/"
+          cp build/GPTGatewayLauncher build/GPTGatewayLauncher.sha256 "$STAGE/build/"
+          cp src/gateway.zsh "$STAGE/src/"
+          cp assets/GPT-Gateway.svg "$STAGE/assets/"
+          chmod +x "$STAGE/Install-GPT-Gateway.sh" "$STAGE/build/GPTGatewayLauncher" "$STAGE/src/gateway.zsh"
+
+          rm -f "dist/$PACKAGE_NAME.zip"
+          ditto -c -k --sequesterRsrc --keepParent "$STAGE" "dist/$PACKAGE_NAME.zip"
+          ls -lh "dist/$PACKAGE_NAME.zip"
+
+      - name: Verify exact packaged ZIP on Apple silicon
+        run: |
+          PACKAGE_NAME="GPT-Gateway-macOS-v2.1.0"
+          EXTRACT="$RUNNER_TEMP/package-verify"
+          PACKAGE_APPS="$RUNNER_TEMP/PackageApplications"
+          rm -rf "$EXTRACT" "$PACKAGE_APPS"
+          mkdir -p "$EXTRACT"
+          ditto -x -k "dist/$PACKAGE_NAME.zip" "$EXTRACT"
+
+          BUNDLE="$EXTRACT/$PACKAGE_NAME"
+          test -f "$BUNDLE/build/GPTGatewayLauncher.sha256"
+          chmod +x "$BUNDLE/Install-GPT-Gateway.sh"
+
+          GPT_GATEWAY_INSTALL_ROOT="$PACKAGE_APPS" \
+          GPT_GATEWAY_SKIP_OPEN=1 \
+          /bin/zsh "$BUNDLE/Install-GPT-Gateway.sh"
+
+          APP="$PACKAGE_APPS/GPT Gateway.app"
+          PACKAGE_SELF_TEST="$("$APP/Contents/MacOS/GPTGatewayLauncher" --native-self-test)"
+          echo "$PACKAGE_SELF_TEST"
+          echo "$PACKAGE_SELF_TEST" | grep -q 'arch=arm64'
+          echo "$PACKAGE_SELF_TEST" | grep -q 'translated=0'
+          codesign --verify --deep --strict "$APP"
+
+      - name: Commit verified macOS deliverables
         if: github.actor != 'github-actions[bot]'
         run: |
-          if [[ -z "$(git status --porcelain -- build/GPTGatewayLauncher)" ]]; then
-            echo "Native launcher is already current"
+          if [[ -z "$(git status --porcelain -- build/GPTGatewayLauncher build/GPTGatewayLauncher.sha256 dist/GPT-Gateway-macOS-v2.1.0.zip)" ]]; then
+            echo "Verified deliverables are already current"
             exit 0
           fi
+
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add build/GPTGatewayLauncher
-          git commit -m "build verified macOS launcher"
+          git add -f build/GPTGatewayLauncher build/GPTGatewayLauncher.sha256 dist/GPT-Gateway-macOS-v2.1.0.zip
+          git commit -m "build verified GPT Gateway macOS v2.1.0"
           git push
