@@ -20,6 +20,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Prepare scripts
+        run: |
+          chmod +x Install-GPT-Gateway.sh
+          chmod +x src/gateway.zsh
+
       - name: Syntax checks
         run: |
           /bin/zsh -n Install-GPT-Gateway.sh
@@ -40,6 +45,13 @@ jobs:
           lipo -archs build/GPTGatewayLauncher | grep -q arm64
           lipo -archs build/GPTGatewayLauncher | grep -q x86_64
 
+      - name: Verify native Apple silicon execution
+        run: |
+          SELF_TEST="$(./build/GPTGatewayLauncher --native-self-test)"
+          echo "$SELF_TEST"
+          echo "$SELF_TEST" | grep -q 'arch=arm64'
+          echo "$SELF_TEST" | grep -q 'translated=0'
+
       - name: Test app installation
         run: |
           TEST_ROOT="$RUNNER_TEMP/Applications"
@@ -54,12 +66,17 @@ jobs:
           test "$(defaults read "$APP/Contents/Info" CFBundleExecutable)" = "GPTGatewayLauncher"
           test "$(defaults read "$APP/Contents/Info" LSRequiresNativeExecution)" = "1"
           lipo -archs "$APP/Contents/MacOS/GPTGatewayLauncher" | grep -q arm64
+          lipo -archs "$APP/Contents/MacOS/GPTGatewayLauncher" | grep -q x86_64
+          APP_SELF_TEST="$("$APP/Contents/MacOS/GPTGatewayLauncher" --native-self-test)"
+          echo "$APP_SELF_TEST"
+          echo "$APP_SELF_TEST" | grep -q 'arch=arm64'
+          echo "$APP_SELF_TEST" | grep -q 'translated=0'
           codesign --verify --deep --strict "$APP"
 
       - name: Commit verified launcher
         if: github.actor != 'github-actions[bot]'
         run: |
-          if git diff --quiet -- build/GPTGatewayLauncher; then
+          if [[ -z "$(git status --porcelain -- build/GPTGatewayLauncher)" ]]; then
             echo "Native launcher is already current"
             exit 0
           fi
