@@ -6,13 +6,12 @@ LAUNCHER="$ROOT_DIR/build/GPTGatewayLauncher"
 CHECKSUM_FILE="$ROOT_DIR/build/GPTGatewayLauncher.sha256"
 GATEWAY_SCRIPT="$ROOT_DIR/src/gateway.zsh"
 ICON_SOURCE="$ROOT_DIR/assets/GPT-Gateway.png"
-VERSION="2.1.1"
+VERSION="2.1.2"
+BUILD_NUMBER="212"
 
 INSTALL_ROOT="${GPT_GATEWAY_INSTALL_ROOT:-$HOME/Applications}"
 APP_DIR="$INSTALL_ROOT/GPT Gateway.app"
-CONTENTS="$APP_DIR/Contents"
-MACOS="$CONTENTS/MacOS"
-RESOURCES="$CONTENTS/Resources"
+LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
 
 if [[ "$(uname -s)" != "Darwin" ]]; then
   echo "This installer is for macOS only."
@@ -25,9 +24,7 @@ if [[ ! -f "$LAUNCHER" ]]; then
   exit 1
 fi
 
-# ZIP extraction tools do not always preserve Unix executable bits.
 chmod +x "$LAUNCHER" 2>/dev/null || true
-
 if [[ ! -x "$LAUNCHER" ]]; then
   echo "The native launcher could not be made executable: $LAUNCHER"
   exit 1
@@ -38,6 +35,11 @@ if [[ ! -f "$GATEWAY_SCRIPT" ]]; then
   exit 1
 fi
 chmod +x "$GATEWAY_SCRIPT" 2>/dev/null || true
+
+if [[ ! -f "$ICON_SOURCE" ]]; then
+  echo "Missing GPT Gateway icon: $ICON_SOURCE"
+  exit 1
+fi
 
 if [[ -f "$CHECKSUM_FILE" ]]; then
   EXPECTED_SHA="$(awk '{print $1}' "$CHECKSUM_FILE")"
@@ -53,7 +55,6 @@ fi
 
 ARCHS="$(/usr/bin/lipo -archs "$LAUNCHER" 2>/dev/null || true)"
 printf 'Detected launcher architectures: %s\n' "${ARCHS:-unreadable}"
-
 if [[ "$ARCHS" != *"arm64"* ]]; then
   echo "The launcher does not contain an arm64 slice."
   /usr/bin/file "$LAUNCHER" 2>/dev/null || true
@@ -62,14 +63,41 @@ if [[ "$ARCHS" != *"arm64"* ]]; then
   exit 1
 fi
 
-rm -rf "$APP_DIR"
-mkdir -p "$MACOS" "$RESOURCES"
+# Build the complete application away from ~/Applications first. This prevents
+# Finder/LaunchServices from seeing a half-built bundle and caching the generic icon.
+TMP_ROOT="$(mktemp -d)"
+trap 'rm -rf "$TMP_ROOT"' EXIT
+STAGE_APP="$TMP_ROOT/GPT Gateway.app"
+CONTENTS="$STAGE_APP/Contents"
+MACOS="$CONTENTS/MacOS"
+RESOURCES="$CONTENTS/Resources"
+ICONSET="$TMP_ROOT/GPT-Gateway.iconset"
+mkdir -p "$MACOS" "$RESOURCES" "$ICONSET" "$INSTALL_ROOT"
 
 cp "$LAUNCHER" "$MACOS/GPTGatewayLauncher"
 chmod +x "$MACOS/GPTGatewayLauncher"
-
 cp "$GATEWAY_SCRIPT" "$RESOURCES/gateway.zsh"
 chmod +x "$RESOURCES/gateway.zsh"
+
+make_icon() {
+  /usr/bin/sips -z "$1" "$1" "$ICON_SOURCE" --out "$ICONSET/$2" >/dev/null
+}
+
+make_icon 16 icon_16x16.png
+make_icon 32 icon_16x16@2x.png
+make_icon 32 icon_32x32.png
+make_icon 64 icon_32x32@2x.png
+make_icon 128 icon_128x128.png
+make_icon 256 icon_128x128@2x.png
+make_icon 256 icon_256x256.png
+make_icon 512 icon_256x256@2x.png
+make_icon 512 icon_512x512.png
+make_icon 1024 icon_512x512@2x.png
+
+if ! /usr/bin/iconutil -c icns "$ICONSET" -o "$RESOURCES/GPT-Gateway.icns" >/dev/null 2>&1; then
+  echo "Failed to create GPT-Gateway.icns from the user-provided icon."
+  exit 1
+fi
 
 cat > "$CONTENTS/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -82,6 +110,10 @@ cat > "$CONTENTS/Info.plist" <<PLIST
   <string>GPT Gateway</string>
   <key>CFBundleExecutable</key>
   <string>GPTGatewayLauncher</string>
+  <key>CFBundleIconFile</key>
+  <string>GPT-Gateway.icns</string>
+  <key>CFBundleIconName</key>
+  <string>GPT-Gateway</string>
   <key>CFBundleIdentifier</key>
   <string>com.var7iant.gptgateway</string>
   <key>CFBundleInfoDictionaryVersion</key>
@@ -93,7 +125,7 @@ cat > "$CONTENTS/Info.plist" <<PLIST
   <key>CFBundleShortVersionString</key>
   <string>${VERSION}</string>
   <key>CFBundleVersion</key>
-  <string>211</string>
+  <string>${BUILD_NUMBER}</string>
   <key>LSMinimumSystemVersion</key>
   <string>12.0</string>
   <key>LSRequiresNativeExecution</key>
@@ -106,39 +138,25 @@ cat > "$CONTENTS/Info.plist" <<PLIST
 </plist>
 PLIST
 
-ICON_INSTALLED=false
-if [[ -f "$ICON_SOURCE" ]]; then
-  TMP_DIR="$(mktemp -d)"
-  trap 'rm -rf "$TMP_DIR"' EXIT
-  ICONSET="$TMP_DIR/GPT-Gateway.iconset"
-  mkdir -p "$ICONSET"
-
-  make_icon() {
-    /usr/bin/sips -z "$1" "$1" "$ICON_SOURCE" --out "$ICONSET/$2" >/dev/null
-  }
-
-  make_icon 16 icon_16x16.png
-  make_icon 32 icon_16x16@2x.png
-  make_icon 32 icon_32x32.png
-  make_icon 64 icon_32x32@2x.png
-  make_icon 128 icon_128x128.png
-  make_icon 256 icon_128x128@2x.png
-  make_icon 256 icon_256x256.png
-  make_icon 512 icon_256x256@2x.png
-  make_icon 512 icon_512x512.png
-  make_icon 1024 icon_512x512@2x.png
-
-  if /usr/bin/iconutil -c icns "$ICONSET" -o "$RESOURCES/GPT-Gateway.icns" >/dev/null 2>&1; then
-    /usr/libexec/PlistBuddy -c "Add :CFBundleIconFile string GPT-Gateway.icns" "$CONTENTS/Info.plist" >/dev/null
-    ICON_INSTALLED=true
-  fi
+/usr/bin/plutil -lint "$CONTENTS/Info.plist" >/dev/null
+if [[ "$(/usr/bin/defaults read "$CONTENTS/Info" CFBundleIconFile 2>/dev/null || true)" != "GPT-Gateway.icns" ]]; then
+  echo "CFBundleIconFile verification failed."
+  exit 1
 fi
 
-/usr/bin/plutil -lint "$CONTENTS/Info.plist" >/dev/null
-/usr/bin/codesign --force --deep --sign - "$APP_DIR" >/dev/null 2>&1
-/usr/bin/xattr -dr com.apple.quarantine "$APP_DIR" >/dev/null 2>&1 || true
+/usr/bin/codesign --force --deep --sign - "$STAGE_APP" >/dev/null 2>&1
+/usr/bin/codesign --verify --deep --strict "$STAGE_APP" >/dev/null 2>&1
 
-SELF_TEST="$("$MACOS/GPTGatewayLauncher" --native-self-test 2>/dev/null || true)"
+# Publish the finished bundle atomically, then explicitly refresh LaunchServices.
+rm -rf "$APP_DIR"
+/bin/mv "$STAGE_APP" "$APP_DIR"
+/usr/bin/xattr -dr com.apple.quarantine "$APP_DIR" >/dev/null 2>&1 || true
+/usr/bin/touch "$APP_DIR" "$APP_DIR/Contents/Info.plist"
+if [[ -x "$LSREGISTER" ]]; then
+  "$LSREGISTER" -f "$APP_DIR" >/dev/null 2>&1 || true
+fi
+
+SELF_TEST="$("$APP_DIR/Contents/MacOS/GPTGatewayLauncher" --native-self-test 2>/dev/null || true)"
 if [[ "$(uname -m)" == "arm64" ]]; then
   if [[ "$SELF_TEST" != *"arch=arm64"* || "$SELF_TEST" != *"translated=0"* ]]; then
     echo "Native Apple silicon self-test failed: ${SELF_TEST:-no output}"
@@ -153,9 +171,7 @@ printf 'Native launcher architectures: %s\n' "$ARCHS"
 printf 'Native self-test: %s\n' "$SELF_TEST"
 printf 'Rosetta: not required (LSRequiresNativeExecution = true)\n'
 printf 'Proxy default: socks5://127.0.0.1:10808\n'
-if [[ "$ICON_INSTALLED" == true ]]; then
-  printf 'User-provided icon: installed\n'
-fi
+printf 'User-provided icon: installed and registered\n'
 printf '\nOpen Finder > Home > Applications and launch GPT Gateway\n\n'
 
 if [[ -z "${GPT_GATEWAY_SKIP_OPEN:-}" ]]; then
