@@ -9,12 +9,12 @@ Do **not** use GitHub's whole-branch `Download ZIP` for normal installation.
 Download this versioned package instead:
 
 ```text
-dist/GPT-Gateway-macOS-v2.1.3.zip
+dist/GPT-Gateway-macOS-v2.1.4.zip
 ```
 
 That exact ZIP is generated and then re-extracted/tested by the macOS ARM64 CI job before it is committed to the branch.
 
-Version `2.1.3` restores the complete user-provided GPT Gateway PNG after the previous repository copy was truncated. The installer builds the entire `.app` in a temporary directory, validates every icon representation and reverse-decodes the generated ICNS before the app becomes visible, publishes the completed bundle atomically, and then registers it with LaunchServices.
+Version `2.1.4` removes the solid black matte outside the user-provided rounded-square artwork while preserving the icon interior. The PNG now has a real alpha channel, so Finder can composite the rounded icon cleanly on light or dark backgrounds. The installer builds the entire `.app` in a temporary directory, validates every icon representation and reverse-decodes the generated ICNS before the app becomes visible, publishes the completed bundle atomically, and then registers it with LaunchServices.
 
 ## Default proxy
 
@@ -63,7 +63,7 @@ CI also asks `NSWorkspace` for the icon macOS actually resolves for the installe
 
 ## Install
 
-Extract `GPT-Gateway-macOS-v2.1.3.zip`, open Terminal in the extracted `GPT-Gateway-macOS-v2.1.3` folder, then run:
+Extract `GPT-Gateway-macOS-v2.1.4.zip`, open Terminal in the extracted `GPT-Gateway-macOS-v2.1.4` folder, then run:
 
 ```bash
 zsh Install-GPT-Gateway.sh
