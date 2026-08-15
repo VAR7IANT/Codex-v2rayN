@@ -6,8 +6,8 @@ LAUNCHER="$ROOT_DIR/build/GPTGatewayLauncher"
 CHECKSUM_FILE="$ROOT_DIR/build/GPTGatewayLauncher.sha256"
 GATEWAY_SCRIPT="$ROOT_DIR/src/gateway.zsh"
 ICON_SOURCE="$ROOT_DIR/assets/GPT-Gateway.png"
-VERSION="2.1.2"
-BUILD_NUMBER="212"
+VERSION="2.1.3"
+BUILD_NUMBER="213"
 
 INSTALL_ROOT="${GPT_GATEWAY_INSTALL_ROOT:-$HOME/Applications}"
 APP_DIR="$INSTALL_ROOT/GPT Gateway.app"
@@ -24,20 +24,21 @@ if [[ ! -f "$LAUNCHER" ]]; then
   exit 1
 fi
 
-chmod +x "$LAUNCHER" 2>/dev/null || true
-if [[ ! -x "$LAUNCHER" ]]; then
-  echo "The native launcher could not be made executable: $LAUNCHER"
-  exit 1
-fi
-
 if [[ ! -f "$GATEWAY_SCRIPT" ]]; then
   echo "Missing gateway script: $GATEWAY_SCRIPT"
   exit 1
 fi
-chmod +x "$GATEWAY_SCRIPT" 2>/dev/null || true
 
 if [[ ! -f "$ICON_SOURCE" ]]; then
   echo "Missing GPT Gateway icon: $ICON_SOURCE"
+  exit 1
+fi
+
+ICON_WIDTH="$(/usr/bin/sips -g pixelWidth "$ICON_SOURCE" 2>/dev/null | /usr/bin/awk '/pixelWidth:/ {print $2}')"
+ICON_HEIGHT="$(/usr/bin/sips -g pixelHeight "$ICON_SOURCE" 2>/dev/null | /usr/bin/awk '/pixelHeight:/ {print $2}')"
+if [[ -z "$ICON_WIDTH" || -z "$ICON_HEIGHT" || "$ICON_WIDTH" != "$ICON_HEIGHT" || "$ICON_WIDTH" -lt 1024 ]]; then
+  echo "The GPT Gateway icon must be a readable square PNG at least 1024 x 1024."
+  echo "Detected: ${ICON_WIDTH:-unreadable} x ${ICON_HEIGHT:-unreadable}"
   exit 1
 fi
 
@@ -55,8 +56,8 @@ fi
 
 ARCHS="$(/usr/bin/lipo -archs "$LAUNCHER" 2>/dev/null || true)"
 printf 'Detected launcher architectures: %s\n' "${ARCHS:-unreadable}"
-if [[ "$ARCHS" != *"arm64"* ]]; then
-  echo "The launcher does not contain an arm64 slice."
+if [[ "$ARCHS" != *"arm64"* || "$ARCHS" != *"x86_64"* ]]; then
+  echo "The launcher must contain both arm64 and x86_64 slices."
   /usr/bin/file "$LAUNCHER" 2>/dev/null || true
   echo "This usually means the package is stale or incomplete."
   echo "Use the versioned GPT Gateway macOS package from dist/."
@@ -81,6 +82,13 @@ chmod +x "$RESOURCES/gateway.zsh"
 
 make_icon() {
   /usr/bin/sips -z "$1" "$1" "$ICON_SOURCE" --out "$ICONSET/$2" >/dev/null
+  local width height
+  width="$(/usr/bin/sips -g pixelWidth "$ICONSET/$2" 2>/dev/null | /usr/bin/awk '/pixelWidth:/ {print $2}')"
+  height="$(/usr/bin/sips -g pixelHeight "$ICONSET/$2" 2>/dev/null | /usr/bin/awk '/pixelHeight:/ {print $2}')"
+  if [[ "$width" != "$1" || "$height" != "$1" ]]; then
+    echo "Invalid generated icon representation: $2 (${width:-?} x ${height:-?})"
+    exit 1
+  fi
 }
 
 make_icon 16 icon_16x16.png
@@ -94,8 +102,31 @@ make_icon 512 icon_256x256@2x.png
 make_icon 512 icon_512x512.png
 make_icon 1024 icon_512x512@2x.png
 
-if ! /usr/bin/iconutil -c icns "$ICONSET" -o "$RESOURCES/GPT-Gateway.icns" >/dev/null 2>&1; then
+if ! /usr/bin/iconutil -c icns "$ICONSET" -o "$RESOURCES/GPT-Gateway.icns"; then
   echo "Failed to create GPT-Gateway.icns from the user-provided icon."
+  exit 1
+fi
+
+# A successful iconutil exit alone is not enough: prove the ICNS can be decoded
+# back into the complete set of Apple icon representations before publishing.
+ICON_CHECK="$TMP_ROOT/GPT-Gateway-check.iconset"
+if ! /usr/bin/iconutil -c iconset "$RESOURCES/GPT-Gateway.icns" -o "$ICON_CHECK"; then
+  echo "Generated GPT-Gateway.icns could not be decoded by iconutil."
+  exit 1
+fi
+for icon_name in \
+  icon_16x16.png icon_16x16@2x.png \
+  icon_32x32.png icon_32x32@2x.png \
+  icon_128x128.png icon_128x128@2x.png \
+  icon_256x256.png icon_256x256@2x.png \
+  icon_512x512.png; do
+  if [[ ! -s "$ICON_CHECK/$icon_name" ]]; then
+    echo "Generated GPT-Gateway.icns is missing $icon_name."
+    exit 1
+  fi
+done
+if [[ "$(/usr/bin/file -b "$RESOURCES/GPT-Gateway.icns")" != *"Mac OS X icon"* ]]; then
+  echo "Generated GPT-Gateway.icns is not recognized as a macOS icon."
   exit 1
 fi
 
@@ -112,8 +143,6 @@ cat > "$CONTENTS/Info.plist" <<PLIST
   <string>GPTGatewayLauncher</string>
   <key>CFBundleIconFile</key>
   <string>GPT-Gateway.icns</string>
-  <key>CFBundleIconName</key>
-  <string>GPT-Gateway</string>
   <key>CFBundleIdentifier</key>
   <string>com.var7iant.gptgateway</string>
   <key>CFBundleInfoDictionaryVersion</key>
@@ -144,10 +173,19 @@ if [[ "$(/usr/bin/defaults read "$CONTENTS/Info" CFBundleIconFile 2>/dev/null ||
   exit 1
 fi
 
+if [[ -n "$(/usr/bin/defaults read "$CONTENTS/Info" CFBundleIconName 2>/dev/null || true)" ]]; then
+  echo "CFBundleIconName must not be present without an asset catalog."
+  exit 1
+fi
+
 /usr/bin/codesign --force --deep --sign - "$STAGE_APP" >/dev/null 2>&1
 /usr/bin/codesign --verify --deep --strict "$STAGE_APP" >/dev/null 2>&1
 
-# Publish the finished bundle atomically, then explicitly refresh LaunchServices.
+# Only expose the app after every bundle file, plist check, icon check, native
+# architecture check, and signature check has completed successfully.
+if [[ -d "$APP_DIR" && -x "$LSREGISTER" ]]; then
+  "$LSREGISTER" -u "$APP_DIR" >/dev/null 2>&1 || true
+fi
 rm -rf "$APP_DIR"
 /bin/mv "$STAGE_APP" "$APP_DIR"
 /usr/bin/xattr -dr com.apple.quarantine "$APP_DIR" >/dev/null 2>&1 || true

@@ -128,8 +128,22 @@ jobs:
           plutil -lint "$APP/Contents/Info.plist"
           test "$(defaults read "$APP/Contents/Info" CFBundleExecutable)" = "GPTGatewayLauncher"
           test "$(defaults read "$APP/Contents/Info" CFBundleIconFile)" = "GPT-Gateway.icns"
+          ! defaults read "$APP/Contents/Info" CFBundleIconName >/dev/null 2>&1
           test "$(defaults read "$APP/Contents/Info" LSRequiresNativeExecution)" = "1"
-          test "$(defaults read "$APP/Contents/Info" CFBundleShortVersionString)" = "2.1.2"
+          test "$(defaults read "$APP/Contents/Info" CFBundleShortVersionString)" = "2.1.3"
+          file "$APP/Contents/Resources/GPT-Gateway.icns" | grep -q 'Mac OS X icon'
+          ls -lh "$APP/Contents/Resources/GPT-Gateway.icns"
+          ICON_CHECK="$RUNNER_TEMP/source-install-icon-check.iconset"
+          iconutil -c iconset "$APP/Contents/Resources/GPT-Gateway.icns" -o "$ICON_CHECK"
+          test -f "$ICON_CHECK/icon_16x16.png"
+          test -f "$ICON_CHECK/icon_16x16@2x.png"
+          test -f "$ICON_CHECK/icon_32x32.png"
+          test -f "$ICON_CHECK/icon_32x32@2x.png"
+          test -f "$ICON_CHECK/icon_128x128.png"
+          test -f "$ICON_CHECK/icon_128x128@2x.png"
+          test -f "$ICON_CHECK/icon_256x256.png"
+          test -f "$ICON_CHECK/icon_256x256@2x.png"
+          test -f "$ICON_CHECK/icon_512x512.png"
           lipo -archs "$APP/Contents/MacOS/GPTGatewayLauncher" | grep -q arm64
           lipo -archs "$APP/Contents/MacOS/GPTGatewayLauncher" | grep -q x86_64
           APP_SELF_TEST="$("$APP/Contents/MacOS/GPTGatewayLauncher" --native-self-test)"
@@ -137,11 +151,16 @@ jobs:
           echo "$APP_SELF_TEST" | grep -q 'arch=arm64'
           echo "$APP_SELF_TEST" | grep -q 'translated=0'
           codesign --verify --deep --strict "$APP"
-          swift tests/verify_app_icon.swift "$APP"
+          mdls "$APP"
+          swift tests/verify_app_icon.swift \
+            "$APP" \
+            "$GITHUB_WORKSPACE/assets/GPT-Gateway.png" \
+            "$RUNNER_TEMP/source-install-nsworkspace-icon.png"
+          test -s "$RUNNER_TEMP/source-install-nsworkspace-icon.png"
 
       - name: Build versioned download package
         run: |
-          PACKAGE_NAME="GPT-Gateway-macOS-v2.1.2"
+          PACKAGE_NAME="GPT-Gateway-macOS-v2.1.3"
           STAGE="$RUNNER_TEMP/$PACKAGE_NAME"
           rm -rf "$STAGE"
           mkdir -p "$STAGE/build" "$STAGE/src" "$STAGE/assets" dist
@@ -158,7 +177,7 @@ jobs:
 
       - name: Verify exact packaged ZIP on Apple silicon
         run: |
-          PACKAGE_NAME="GPT-Gateway-macOS-v2.1.2"
+          PACKAGE_NAME="GPT-Gateway-macOS-v2.1.3"
           EXTRACT="$RUNNER_TEMP/package-verify"
           PACKAGE_APPS="$RUNNER_TEMP/PackageApplications"
           rm -rf "$EXTRACT" "$PACKAGE_APPS"
@@ -177,23 +196,37 @@ jobs:
           APP="$PACKAGE_APPS/GPT Gateway.app"
           test -f "$APP/Contents/Resources/GPT-Gateway.icns"
           test "$(defaults read "$APP/Contents/Info" CFBundleIconFile)" = "GPT-Gateway.icns"
+          ! defaults read "$APP/Contents/Info" CFBundleIconName >/dev/null 2>&1
+          plutil -lint "$APP/Contents/Info.plist"
+          test "$(defaults read "$APP/Contents/Info" CFBundleExecutable)" = "GPTGatewayLauncher"
+          test "$(defaults read "$APP/Contents/Info" LSRequiresNativeExecution)" = "1"
+          file "$APP/Contents/Resources/GPT-Gateway.icns" | grep -q 'Mac OS X icon'
+          PACKAGE_ICON_CHECK="$RUNNER_TEMP/package-icon-check.iconset"
+          iconutil -c iconset "$APP/Contents/Resources/GPT-Gateway.icns" -o "$PACKAGE_ICON_CHECK"
+          lipo -archs "$APP/Contents/MacOS/GPTGatewayLauncher" | grep -q arm64
+          lipo -archs "$APP/Contents/MacOS/GPTGatewayLauncher" | grep -q x86_64
           PACKAGE_SELF_TEST="$("$APP/Contents/MacOS/GPTGatewayLauncher" --native-self-test)"
           echo "$PACKAGE_SELF_TEST"
           echo "$PACKAGE_SELF_TEST" | grep -q 'arch=arm64'
           echo "$PACKAGE_SELF_TEST" | grep -q 'translated=0'
           codesign --verify --deep --strict "$APP"
-          swift tests/verify_app_icon.swift "$APP"
+          mdls "$APP"
+          swift tests/verify_app_icon.swift \
+            "$APP" \
+            "$BUNDLE/assets/GPT-Gateway.png" \
+            "$RUNNER_TEMP/package-install-nsworkspace-icon.png"
+          test -s "$RUNNER_TEMP/package-install-nsworkspace-icon.png"
 
       - name: Commit verified macOS deliverables
         if: github.actor != 'github-actions[bot]'
         run: |
-          if [[ -z "$(git status --porcelain -- build/GPTGatewayLauncher build/GPTGatewayLauncher.sha256 dist/GPT-Gateway-macOS-v2.1.2.zip)" ]]; then
+          if [[ -z "$(git status --porcelain -- build/GPTGatewayLauncher build/GPTGatewayLauncher.sha256 dist/GPT-Gateway-macOS-v2.1.3.zip)" ]]; then
             echo "Verified deliverables are already current"
             exit 0
           fi
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -f build/GPTGatewayLauncher build/GPTGatewayLauncher.sha256 dist/GPT-Gateway-macOS-v2.1.2.zip
-          git commit -m "build verified GPT Gateway macOS v2.1.2"
+          git add -f build/GPTGatewayLauncher build/GPTGatewayLauncher.sha256 dist/GPT-Gateway-macOS-v2.1.3.zip
+          git commit -m "build verified GPT Gateway macOS v2.1.3"
           git push

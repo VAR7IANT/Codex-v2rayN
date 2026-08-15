@@ -9,12 +9,12 @@ Do **not** use GitHub's whole-branch `Download ZIP` for normal installation.
 Download this versioned package instead:
 
 ```text
-dist/GPT-Gateway-macOS-v2.1.2.zip
+dist/GPT-Gateway-macOS-v2.1.3.zip
 ```
 
 That exact ZIP is generated and then re-extracted/tested by the macOS ARM64 CI job before it is committed to the branch.
 
-Version `2.1.2` keeps the original blue/purple neon GPT Gateway icon and fixes macOS Finder showing the generic application icon. The installer now builds the entire `.app` in a temporary directory, writes the icon metadata before the app becomes visible, publishes the completed bundle atomically, and re-registers it with LaunchServices.
+Version `2.1.3` restores the complete user-provided GPT Gateway PNG after the previous repository copy was truncated. The installer builds the entire `.app` in a temporary directory, validates every icon representation and reverse-decodes the generated ICNS before the app becomes visible, publishes the completed bundle atomically, and then registers it with LaunchServices.
 
 ## Default proxy
 
@@ -57,13 +57,13 @@ The original user-provided icon lives at:
 assets/GPT-Gateway.png
 ```
 
-The installer creates a complete multi-resolution `GPT-Gateway.icns`, embeds it in the bundle, sets both `CFBundleIconFile` and `CFBundleIconName`, and registers the finished app with LaunchServices.
+The installer creates a complete multi-resolution `GPT-Gateway.icns`, reverse-decodes it with `iconutil`, embeds it in the bundle, sets `CFBundleIconFile` to that exact file, and registers the finished app with LaunchServices. It deliberately omits `CFBundleIconName`, because that key is for an asset-catalog icon and this bundle does not contain `Assets.car`.
 
 CI also asks `NSWorkspace` for the icon macOS actually resolves for the installed `.app` and fails the build if macOS returns the generic application icon.
 
 ## Install
 
-Extract `GPT-Gateway-macOS-v2.1.2.zip`, open Terminal in the extracted `GPT-Gateway-macOS-v2.1.2` folder, then run:
+Extract `GPT-Gateway-macOS-v2.1.3.zip`, open Terminal in the extracted `GPT-Gateway-macOS-v2.1.3` folder, then run:
 
 ```bash
 zsh Install-GPT-Gateway.sh
@@ -91,8 +91,8 @@ The macOS workflow does more than compile the project:
 6. process-scoped `ALL_PROXY` injection into a fake ChatGPT executable
 7. Chromium `--proxy-server` argument injection
 8. complete `.app` installation including the original icon
-9. `Info.plist`, architecture, icon, and code-sign validation
-10. `NSWorkspace` verification that macOS resolves a non-generic app icon
+9. `Info.plist`, architecture, ICNS reverse-decode, and code-sign validation
+10. `NSWorkspace` verification that macOS resolves the icon derived from the source PNG, not a generic, stale, blank, or black icon
 11. creation of the versioned ZIP
 12. re-extraction of that exact ZIP followed by a second installation, native self-test, and `NSWorkspace` icon check
 
