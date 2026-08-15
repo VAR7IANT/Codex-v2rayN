@@ -3,11 +3,13 @@ set -eu
 
 PROXY_HOST="${GPT_GATEWAY_PROXY_HOST:-127.0.0.1}"
 PROXY_PORT="${GPT_GATEWAY_PROXY_PORT:-10808}"
+CHECK_URL="${GPT_GATEWAY_CHECK_URL:-https://chatgpt.com/}"
 SOCKS_PROXY="socks5h://${PROXY_HOST}:${PROXY_PORT}"
 SOCKS_CHROMIUM="socks5://${PROXY_HOST}:${PROXY_PORT}"
 HTTP_PROXY_URL="http://${PROXY_HOST}:${PROXY_PORT}"
+SKIP_UI="${GPT_GATEWAY_SKIP_UI:-}"
 
-LOG_DIR="$HOME/Library/Logs"
+LOG_DIR="${GPT_GATEWAY_LOG_DIR:-$HOME/Library/Logs}"
 LOG_FILE="$LOG_DIR/GPT-Gateway.log"
 mkdir -p "$LOG_DIR"
 
@@ -16,6 +18,9 @@ log() {
 }
 
 notify() {
+  if [[ -n "$SKIP_UI" ]]; then
+    return 0
+  fi
   /usr/bin/osascript - "$1" >/dev/null 2>&1 <<'APPLESCRIPT' || true
 on run argv
   display notification (item 1 of argv) with title "GPT Gateway"
@@ -26,6 +31,10 @@ APPLESCRIPT
 alert() {
   local message="$1"
   log "ERROR: $message"
+  if [[ -n "$SKIP_UI" ]]; then
+    printf 'GPT Gateway: %s\n' "$message" >&2
+    return 0
+  fi
   /usr/bin/osascript - "$message" >/dev/null 2>&1 <<'APPLESCRIPT' || true
 on run argv
   display alert "GPT Gateway" message (item 1 of argv) as critical buttons {"OK"} default button "OK"
@@ -34,6 +43,14 @@ APPLESCRIPT
 }
 
 find_chatgpt() {
+  if [[ -n "${GPT_GATEWAY_APP_BIN:-}" ]]; then
+    if [[ -x "$GPT_GATEWAY_APP_BIN" ]]; then
+      printf '%s\n' "$GPT_GATEWAY_APP_BIN"
+      return 0
+    fi
+    return 1
+  fi
+
   local candidate
   for candidate in \
     "/Applications/ChatGPT.app/Contents/MacOS/ChatGPT" \
@@ -49,6 +66,7 @@ find_chatgpt() {
 log "------------------------------------------------------------"
 log "GPT Gateway starting"
 log "Proxy: $SOCKS_PROXY"
+log "Check URL: $CHECK_URL"
 
 APP_BIN="$(find_chatgpt || true)"
 if [[ -z "$APP_BIN" ]]; then
@@ -69,7 +87,7 @@ if ! /usr/bin/curl \
   --output /dev/null \
   --max-time 10 \
   --proxy "$SOCKS_PROXY" \
-  "https://chatgpt.com/"; then
+  "$CHECK_URL"; then
   alert "V2Ray could not reach ChatGPT through ${PROXY_HOST}:${PROXY_PORT}. Check that V2Ray is running and port ${PROXY_PORT} is a SOCKS5 or mixed inbound."
   exit 1
 fi
@@ -86,7 +104,7 @@ if /usr/bin/curl \
   --output /dev/null \
   --max-time 5 \
   --proxy "$HTTP_PROXY_URL" \
-  "https://chatgpt.com/"; then
+  "$CHECK_URL"; then
   export HTTP_PROXY="$HTTP_PROXY_URL"
   export HTTPS_PROXY="$HTTP_PROXY_URL"
   export http_proxy="$HTTP_PROXY_URL"
