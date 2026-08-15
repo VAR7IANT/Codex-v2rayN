@@ -1,6 +1,18 @@
 # GPT Gateway for macOS
 
-A clean macOS-only launcher that starts the ChatGPT desktop app through a local V2Ray SOCKS5 proxy without changing the persistent macOS system proxy.
+A macOS-only launcher that starts the ChatGPT desktop app through a local V2Ray proxy without changing the persistent macOS system proxy.
+
+## Download
+
+Do **not** use GitHub's whole-branch `Download ZIP` for normal installation.
+
+Download this versioned package instead:
+
+```text
+dist/GPT-Gateway-macOS-v2.1.0.zip
+```
+
+That exact ZIP is generated and then re-extracted/tested by the macOS ARM64 CI job before it is committed to the branch.
 
 ## Default proxy
 
@@ -9,33 +21,43 @@ A clean macOS-only launcher that starts the ChatGPT desktop app through a local 
 socks5h://127.0.0.1:10808
 ```
 
-## Why this version is different
+## Architecture
 
-This branch contains no Windows BAT or PowerShell launcher code. The application bundle uses a real native Mach-O executable as `CFBundleExecutable` instead of a shell script or AppleScript applet.
+This branch contains no Windows BAT, PowerShell, Windows proxy helper, Windows test, or Windows icon code.
 
-The native launcher is built and verified on a GitHub macOS runner as a Universal binary containing both `arm64` and `x86_64`. The generated app also sets `LSRequiresNativeExecution=true`, so Apple-silicon Macs do not use Rosetta for GPT Gateway.
+`GPT Gateway.app` uses a real Mach-O executable as `CFBundleExecutable`. It does not use a shell script or AppleScript applet as the application entry point.
 
-## Project layout
+The launcher is built as a Universal Mach-O containing:
 
 ```text
-Install-GPT-Gateway.sh        macOS installer
-src/GPTGatewayLauncher.c      native app entry point
-src/gateway.zsh               V2Ray and ChatGPT launch logic
-assets/GPT-Gateway.svg        icon source
-build/GPTGatewayLauncher      verified Universal Mach-O binary
-.github/workflows/test.yml    macOS build and validation
+arm64 x86_64
 ```
+
+The app also sets:
+
+```text
+LSRequiresNativeExecution = true
+```
+
+On the macOS ARM64 CI runner, both the raw launcher and the launcher copied into the final application bundle must report:
+
+```text
+arch=arm64 translated=0
+```
+
+before the package is accepted.
 
 ## Install
 
-Download the complete `agent/macos-gpt-gateway` branch ZIP after the GitHub macOS build has passed, extract it, open Terminal in the extracted folder, and run:
+Extract `GPT-Gateway-macOS-v2.1.0.zip`, open Terminal in the extracted `GPT-Gateway-macOS-v2.1.0` folder, then run:
 
 ```bash
-chmod +x Install-GPT-Gateway.sh
-./Install-GPT-Gateway.sh
+zsh Install-GPT-Gateway.sh
 ```
 
-The installer creates:
+The installer automatically restores executable permissions if the ZIP extractor removed them. It also verifies the launcher SHA-256, checks the `arm64` slice, installs the app, signs the local bundle ad-hoc, clears quarantine from the generated app, and performs a native-execution self-test.
+
+The installed app is:
 
 ```text
 ~/Applications/GPT Gateway.app
@@ -43,42 +65,52 @@ The installer creates:
 
 Then completely quit ChatGPT with `Command-Q` and open **GPT Gateway**.
 
+## What CI tests
+
+The macOS workflow does more than compile the project:
+
+1. zsh, Python, and C syntax checks
+2. Universal `arm64 + x86_64` Mach-O build
+3. native Apple-silicon runtime self-test (`translated=0`)
+4. a local mock SOCKS5 server
+5. a real `curl` request through that SOCKS5 server
+6. process-scoped `ALL_PROXY` injection into a fake ChatGPT executable
+7. Chromium `--proxy-server` argument injection
+8. complete `.app` installation
+9. `Info.plist`, architecture, and code-sign validation
+10. creation of the versioned ZIP
+11. re-extraction of that exact ZIP followed by a second full installation and native self-test
+
 ## What happens on launch
 
-1. GPT Gateway starts through its native Universal Mach-O executable
-2. The launcher runs the bundled `gateway.zsh`
-3. The script finds `/Applications/ChatGPT.app`
-4. It verifies V2Ray connectivity through `127.0.0.1:10808`
-5. It exports process-scoped SOCKS5 proxy variables
-6. If port `10808` also supports HTTP CONNECT, HTTP/HTTPS proxy variables are added automatically
-7. ChatGPT starts as a child process with the proxy environment
+1. the native `GPTGatewayLauncher` starts
+2. it runs the bundled `gateway.zsh`
+3. the script finds `ChatGPT.app`
+4. it checks V2Ray through `127.0.0.1:10808`
+5. it exports process-scoped SOCKS5 proxy variables
+6. if port `10808` also accepts HTTP proxy traffic, HTTP/HTTPS variables are enabled too
+7. ChatGPT starts with the proxy environment and Chromium proxy argument
 8. GPT Gateway exits
 
 No persistent macOS network preference is modified.
 
-## Check the proxy without launching ChatGPT
-
-After installation:
+## Check without launching ChatGPT
 
 ```bash
 "$HOME/Applications/GPT Gateway.app/Contents/MacOS/GPTGatewayLauncher" --check
 ```
 
-## Verify native architecture
+## Verify native execution
 
 ```bash
-file "$HOME/Applications/GPT Gateway.app/Contents/MacOS/GPTGatewayLauncher"
-lipo -archs "$HOME/Applications/GPT Gateway.app/Contents/MacOS/GPTGatewayLauncher"
-defaults read "$HOME/Applications/GPT Gateway.app/Contents/Info" LSRequiresNativeExecution
+"$HOME/Applications/GPT Gateway.app/Contents/MacOS/GPTGatewayLauncher" --native-self-test
 ```
 
-Expected architecture output contains both:
+On Apple silicon, expected output is:
 
 ```text
-arm64 x86_64
+arch=arm64 translated=0
 ```
-
-and `LSRequiresNativeExecution` should return `1`.
 
 ## Logs
 
@@ -88,7 +120,7 @@ and `LSRequiresNativeExecution` should return `1`.
 
 ## Requirements
 
-- macOS 12 or newer
-- Apple silicon or Intel Mac
+- macOS 14 or newer for the current ChatGPT desktop app
+- Apple silicon or Intel Mac supported by the installed ChatGPT build
 - ChatGPT.app installed in `/Applications` or `~/Applications`
 - V2Ray SOCKS5 or mixed inbound listening on `127.0.0.1:10808`
