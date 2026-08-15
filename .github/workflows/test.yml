@@ -230,3 +230,40 @@ jobs:
           git add -f build/GPTGatewayLauncher build/GPTGatewayLauncher.sha256 dist/GPT-Gateway-macOS-v2.1.4.zip
           git commit -m "build verified GPT Gateway macOS v2.1.4"
           git push
+
+      - name: Publish v2.1.4 user download release
+        if: github.actor != 'github-actions[bot]'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="v2.1.4"
+          ASSET="dist/GPT-Gateway-macOS-v2.1.4.zip"
+          NOTES="$RUNNER_TEMP/release-notes.md"
+
+          cat > "$NOTES" <<'NOTES_EOF'
+          # GPT Gateway macOS v2.1.4
+
+          首个面向用户下载的 macOS 正式版本。
+
+          - 通过本地 V2Ray SOCKS5 `127.0.0.1:10808` 启动 ChatGPT.app
+          - 使用项目自带的蓝紫色 GPT Gateway 图标，并移除图标外围黑色底框
+          - Universal 原生启动器：`arm64` + `x86_64`
+          - Apple Silicon 原生运行：`arch=arm64 translated=0`
+          - 安装器采用完整 staging、签名和验证后再安装的安全流程
+          - 最终下载 ZIP 已通过真实安装、codesign、iconutil 和 Swift/AppKit NSWorkspace 图标测试
+
+          安装方法：下载并解压 ZIP，然后在终端进入解压目录运行：
+
+          ```zsh
+          zsh Install-GPT-Gateway.sh
+          ```
+          NOTES_EOF
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$ASSET" --clobber
+          else
+            gh release create "$TAG" "$ASSET" \
+              --target "$(git rev-parse HEAD)" \
+              --title "GPT Gateway macOS v2.1.4" \
+              --notes-file "$NOTES"
+          fi
