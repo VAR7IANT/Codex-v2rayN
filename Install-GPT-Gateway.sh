@@ -3,8 +3,10 @@ set -eu
 
 ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
 LAUNCHER="$ROOT_DIR/build/GPTGatewayLauncher"
+CHECKSUM_FILE="$ROOT_DIR/build/GPTGatewayLauncher.sha256"
 GATEWAY_SCRIPT="$ROOT_DIR/src/gateway.zsh"
 ICON_SOURCE="$ROOT_DIR/assets/GPT-Gateway.svg"
+VERSION="2.1.0"
 
 INSTALL_ROOT="${GPT_GATEWAY_INSTALL_ROOT:-$HOME/Applications}"
 APP_DIR="$INSTALL_ROOT/GPT Gateway.app"
@@ -17,9 +19,17 @@ if [[ "$(uname -s)" != "Darwin" ]]; then
   exit 1
 fi
 
-if [[ ! -x "$LAUNCHER" ]]; then
+if [[ ! -f "$LAUNCHER" ]]; then
   echo "Missing prebuilt native launcher: $LAUNCHER"
-  echo "Download the complete branch ZIP after the macOS build has finished."
+  echo "Use the versioned GPT Gateway macOS package from dist/."
+  exit 1
+fi
+
+# ZIP extraction tools do not always preserve Unix executable bits.
+chmod +x "$LAUNCHER" 2>/dev/null || true
+
+if [[ ! -x "$LAUNCHER" ]]; then
+  echo "The native launcher could not be made executable: $LAUNCHER"
   exit 1
 fi
 
@@ -27,10 +37,28 @@ if [[ ! -f "$GATEWAY_SCRIPT" ]]; then
   echo "Missing gateway script: $GATEWAY_SCRIPT"
   exit 1
 fi
+chmod +x "$GATEWAY_SCRIPT" 2>/dev/null || true
+
+if [[ -f "$CHECKSUM_FILE" ]]; then
+  EXPECTED_SHA="$(awk '{print $1}' "$CHECKSUM_FILE")"
+  ACTUAL_SHA="$(/usr/bin/shasum -a 256 "$LAUNCHER" | awk '{print $1}')"
+  if [[ "$EXPECTED_SHA" != "$ACTUAL_SHA" ]]; then
+    echo "The native launcher failed its SHA-256 integrity check."
+    echo "Expected: $EXPECTED_SHA"
+    echo "Actual:   $ACTUAL_SHA"
+    echo "Download a fresh versioned package from dist/."
+    exit 1
+  fi
+fi
 
 ARCHS="$(/usr/bin/lipo -archs "$LAUNCHER" 2>/dev/null || true)"
+printf 'Detected launcher architectures: %s\n' "${ARCHS:-unreadable}"
+
 if [[ "$ARCHS" != *"arm64"* ]]; then
   echo "The launcher does not contain an arm64 slice."
+  /usr/bin/file "$LAUNCHER" 2>/dev/null || true
+  echo "This usually means the package is stale or incomplete."
+  echo "Use the versioned GPT Gateway macOS package from dist/."
   exit 1
 fi
 
@@ -43,7 +71,7 @@ chmod +x "$MACOS/GPTGatewayLauncher"
 cp "$GATEWAY_SCRIPT" "$RESOURCES/gateway.zsh"
 chmod +x "$RESOURCES/gateway.zsh"
 
-cat > "$CONTENTS/Info.plist" <<'PLIST'
+cat > "$CONTENTS/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -63,9 +91,9 @@ cat > "$CONTENTS/Info.plist" <<'PLIST'
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleShortVersionString</key>
-  <string>2.0.0</string>
+  <string>${VERSION}</string>
   <key>CFBundleVersion</key>
-  <string>200</string>
+  <string>210</string>
   <key>LSMinimumSystemVersion</key>
   <string>12.0</string>
   <key>LSRequiresNativeExecution</key>
@@ -116,8 +144,19 @@ fi
 /usr/bin/codesign --force --deep --sign - "$APP_DIR" >/dev/null 2>&1
 /usr/bin/xattr -dr com.apple.quarantine "$APP_DIR" >/dev/null 2>&1 || true
 
+SELF_TEST="$("$MACOS/GPTGatewayLauncher" --native-self-test 2>/dev/null || true)"
+if [[ "$(uname -m)" == "arm64" ]]; then
+  if [[ "$SELF_TEST" != *"arch=arm64"* || "$SELF_TEST" != *"translated=0"* ]]; then
+    echo "Native Apple silicon self-test failed: ${SELF_TEST:-no output}"
+    rm -rf "$APP_DIR"
+    exit 1
+  fi
+fi
+
 printf '\nInstalled: %s\n' "$APP_DIR"
+printf 'Version: %s\n' "$VERSION"
 printf 'Native launcher architectures: %s\n' "$ARCHS"
+printf 'Native self-test: %s\n' "$SELF_TEST"
 printf 'Rosetta: not required (LSRequiresNativeExecution = true)\n'
 printf 'Proxy default: socks5://127.0.0.1:10808\n'
 if [[ "$ICON_INSTALLED" == true ]]; then
