@@ -17,9 +17,9 @@ fi
 mkdir -p "$INSTALL_ROOT"
 rm -rf "$APP_DIR"
 
-# Build the wrapper as a native macOS AppleScript applet instead of using a
-# shell script as CFBundleExecutable. This avoids LaunchServices treating the
-# generated wrapper as an Intel-only application on Apple silicon Macs.
+# Build the wrapper as a macOS AppleScript applet. Script-only apps can be
+# conservatively selected for Rosetta by LaunchServices on Apple silicon, so
+# LSArchitecturePriority is set below with arm64 first as recommended by Apple.
 APPLET_SOURCE="$TMP_DIR/GPT-Gateway.applescript"
 cat > "$APPLET_SOURCE" <<'APPLESCRIPT'
 on run
@@ -52,12 +52,19 @@ set_plist_string() {
 set_plist_string CFBundleIdentifier com.var7iant.gptgateway
 set_plist_string CFBundleName "GPT Gateway"
 set_plist_string CFBundleDisplayName "GPT Gateway"
-set_plist_string CFBundleShortVersionString 1.2.0
-set_plist_string CFBundleVersion 3
+set_plist_string CFBundleShortVersionString 1.3.0
+set_plist_string CFBundleVersion 4
 set_plist_string LSMinimumSystemVersion 14.0
 
 /usr/libexec/PlistBuddy -c "Set :NSHighResolutionCapable true" "$PLIST" >/dev/null 2>&1 || \
   /usr/libexec/PlistBuddy -c "Add :NSHighResolutionCapable bool true" "$PLIST" >/dev/null
+
+# Apple documents that script-only apps may otherwise be launched under
+# Rosetta as a precaution. Explicitly prefer the native Apple-silicon slice.
+/usr/libexec/PlistBuddy -c "Delete :LSArchitecturePriority" "$PLIST" >/dev/null 2>&1 || true
+/usr/libexec/PlistBuddy -c "Add :LSArchitecturePriority array" "$PLIST" >/dev/null
+/usr/libexec/PlistBuddy -c "Add :LSArchitecturePriority:0 string arm64" "$PLIST" >/dev/null
+/usr/libexec/PlistBuddy -c "Add :LSArchitecturePriority:1 string x86_64" "$PLIST" >/dev/null
 
 ICON_INSTALLED=false
 if [[ -f "$ICON_SOURCE" ]]; then
@@ -105,9 +112,10 @@ ARCH_INFO="$(/usr/bin/file "$APP_EXEC" 2>/dev/null || true)"
 printf '\nInstalled: %s\n' "$APP_DIR"
 printf 'Proxy default: socks5://127.0.0.1:10808\n'
 printf 'Wrapper: native macOS AppleScript applet\n'
+printf 'Architecture priority: arm64 -> x86_64\n'
 if [[ "$(/usr/bin/uname -m)" == "arm64" ]]; then
   if [[ "$ARCH_INFO" == *"arm64"* ]]; then
-    printf 'Apple silicon check: OK (arm64 supported)\n'
+    printf 'Apple silicon check: OK (arm64 supported and preferred)\n'
   else
     printf 'Apple silicon check: WARNING - arm64 was not detected in the generated applet\n'
   fi
