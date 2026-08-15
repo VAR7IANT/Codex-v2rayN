@@ -1,31 +1,70 @@
-name: Test launcher
+name: macOS build and test
 
 on:
   push:
-  pull_request:
+    branches:
+      - agent/macos-gpt-gateway
+    paths:
+      - "src/**"
+      - "Install-GPT-Gateway.sh"
+      - ".github/workflows/test.yml"
+  workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  windows:
-    runs-on: windows-latest
+  build:
+    runs-on: macos-14
+
     steps:
       - uses: actions/checkout@v4
-      - name: Parse PowerShell scripts
-        shell: powershell
+
+      - name: Syntax checks
         run: |
-          $failed = $false
-          Get-ChildItem -Recurse -Filter *.ps1 | ForEach-Object {
-            $tokens = $null
-            $errors = $null
-            [void][System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$tokens, [ref]$errors)
-            if ($errors) {
-              $errors | Format-List
-              $failed = $true
-            }
-          }
-          if ($failed) { throw 'PowerShell parse errors found.' }
-      - name: Test proxy detection and SOCKS5 handshake
-        shell: powershell
-        run: .\tests\Test-ProxyScripts.ps1
+          /bin/zsh -n Install-GPT-Gateway.sh
+          /bin/zsh -n src/gateway.zsh
+          clang -fsyntax-only -Wall -Wextra src/GPTGatewayLauncher.c
+
+      - name: Build universal native launcher
+        run: |
+          mkdir -p build
+          clang -Os -Wall -Wextra \
+            -arch arm64 -arch x86_64 \
+            -mmacosx-version-min=12.0 \
+            src/GPTGatewayLauncher.c \
+            -o build/GPTGatewayLauncher
+          codesign --force --sign - build/GPTGatewayLauncher
+          file build/GPTGatewayLauncher
+          lipo -archs build/GPTGatewayLauncher
+          lipo -archs build/GPTGatewayLauncher | grep -q arm64
+          lipo -archs build/GPTGatewayLauncher | grep -q x86_64
+
+      - name: Test app installation
+        run: |
+          TEST_ROOT="$RUNNER_TEMP/Applications"
+          GPT_GATEWAY_INSTALL_ROOT="$TEST_ROOT" \
+          GPT_GATEWAY_SKIP_OPEN=1 \
+          ./Install-GPT-Gateway.sh
+
+          APP="$TEST_ROOT/GPT Gateway.app"
+          test -x "$APP/Contents/MacOS/GPTGatewayLauncher"
+          test -x "$APP/Contents/Resources/gateway.zsh"
+          plutil -lint "$APP/Contents/Info.plist"
+          test "$(defaults read "$APP/Contents/Info" CFBundleExecutable)" = "GPTGatewayLauncher"
+          test "$(defaults read "$APP/Contents/Info" LSRequiresNativeExecution)" = "1"
+          lipo -archs "$APP/Contents/MacOS/GPTGatewayLauncher" | grep -q arm64
+          codesign --verify --deep --strict "$APP"
+
+      - name: Commit verified launcher
+        if: github.actor != 'github-actions[bot]'
+        run: |
+          if git diff --quiet -- build/GPTGatewayLauncher; then
+            echo "Native launcher is already current"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add build/GPTGatewayLauncher
+          git commit -m "build verified macOS launcher"
+          git push
