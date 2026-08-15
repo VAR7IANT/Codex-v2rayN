@@ -2,6 +2,18 @@
 
 A lightweight Windows launcher that starts OpenAI Codex through a v2rayN SOCKS5 proxy without changing your system-wide proxy settings.
 
+## macOS GPT Gateway
+
+A macOS companion launcher is now available under [`macOS/`](macOS/README.md). It starts the unified `ChatGPT.app` through a local V2Ray proxy while keeping the proxy scoped to that launch.
+
+Default macOS endpoint:
+
+- Host: `127.0.0.1`
+- Port: `10808`
+- SOCKS URL: `socks5://127.0.0.1:10808`
+
+The macOS installer creates `~/Applications/GPT Gateway.app`, which can be opened like a normal app. See [`macOS/README.md`](macOS/README.md) for install and troubleshooting instructions.
+
 ## Default proxy
 
 - Host: `127.0.0.1`
