@@ -34,6 +34,7 @@ jobs:
           /bin/zsh -n Install-GPT-Gateway.sh
           /bin/zsh -n src/gateway.zsh
           python3 -m py_compile tests/mock_socks5.py
+          swiftc -typecheck tests/verify_app_icon.swift
           clang -fsyntax-only -Wall -Wextra src/GPTGatewayLauncher.c
 
       - name: Build verified universal native launcher
@@ -113,7 +114,7 @@ jobs:
           grep -q -- "--proxy-server=socks5://127.0.0.1:$PORT" "$CAPTURE.args"
           grep -q -- '--proxy-bypass-list=localhost;127.0.0.1;\[::1\]' "$CAPTURE.args"
 
-      - name: Test app installation
+      - name: Test app installation and Finder-visible icon
         run: |
           TEST_ROOT="$RUNNER_TEMP/Applications"
           GPT_GATEWAY_INSTALL_ROOT="$TEST_ROOT" \
@@ -126,8 +127,9 @@ jobs:
           test -f "$APP/Contents/Resources/GPT-Gateway.icns"
           plutil -lint "$APP/Contents/Info.plist"
           test "$(defaults read "$APP/Contents/Info" CFBundleExecutable)" = "GPTGatewayLauncher"
+          test "$(defaults read "$APP/Contents/Info" CFBundleIconFile)" = "GPT-Gateway.icns"
           test "$(defaults read "$APP/Contents/Info" LSRequiresNativeExecution)" = "1"
-          test "$(defaults read "$APP/Contents/Info" CFBundleShortVersionString)" = "2.1.1"
+          test "$(defaults read "$APP/Contents/Info" CFBundleShortVersionString)" = "2.1.2"
           lipo -archs "$APP/Contents/MacOS/GPTGatewayLauncher" | grep -q arm64
           lipo -archs "$APP/Contents/MacOS/GPTGatewayLauncher" | grep -q x86_64
           APP_SELF_TEST="$("$APP/Contents/MacOS/GPTGatewayLauncher" --native-self-test)"
@@ -135,10 +137,11 @@ jobs:
           echo "$APP_SELF_TEST" | grep -q 'arch=arm64'
           echo "$APP_SELF_TEST" | grep -q 'translated=0'
           codesign --verify --deep --strict "$APP"
+          swift tests/verify_app_icon.swift "$APP"
 
       - name: Build versioned download package
         run: |
-          PACKAGE_NAME="GPT-Gateway-macOS-v2.1.1"
+          PACKAGE_NAME="GPT-Gateway-macOS-v2.1.2"
           STAGE="$RUNNER_TEMP/$PACKAGE_NAME"
           rm -rf "$STAGE"
           mkdir -p "$STAGE/build" "$STAGE/src" "$STAGE/assets" dist
@@ -155,7 +158,7 @@ jobs:
 
       - name: Verify exact packaged ZIP on Apple silicon
         run: |
-          PACKAGE_NAME="GPT-Gateway-macOS-v2.1.1"
+          PACKAGE_NAME="GPT-Gateway-macOS-v2.1.2"
           EXTRACT="$RUNNER_TEMP/package-verify"
           PACKAGE_APPS="$RUNNER_TEMP/PackageApplications"
           rm -rf "$EXTRACT" "$PACKAGE_APPS"
@@ -173,22 +176,24 @@ jobs:
 
           APP="$PACKAGE_APPS/GPT Gateway.app"
           test -f "$APP/Contents/Resources/GPT-Gateway.icns"
+          test "$(defaults read "$APP/Contents/Info" CFBundleIconFile)" = "GPT-Gateway.icns"
           PACKAGE_SELF_TEST="$("$APP/Contents/MacOS/GPTGatewayLauncher" --native-self-test)"
           echo "$PACKAGE_SELF_TEST"
           echo "$PACKAGE_SELF_TEST" | grep -q 'arch=arm64'
           echo "$PACKAGE_SELF_TEST" | grep -q 'translated=0'
           codesign --verify --deep --strict "$APP"
+          swift tests/verify_app_icon.swift "$APP"
 
       - name: Commit verified macOS deliverables
         if: github.actor != 'github-actions[bot]'
         run: |
-          if [[ -z "$(git status --porcelain -- build/GPTGatewayLauncher build/GPTGatewayLauncher.sha256 dist/GPT-Gateway-macOS-v2.1.1.zip)" ]]; then
+          if [[ -z "$(git status --porcelain -- build/GPTGatewayLauncher build/GPTGatewayLauncher.sha256 dist/GPT-Gateway-macOS-v2.1.2.zip)" ]]; then
             echo "Verified deliverables are already current"
             exit 0
           fi
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -f build/GPTGatewayLauncher build/GPTGatewayLauncher.sha256 dist/GPT-Gateway-macOS-v2.1.1.zip
-          git commit -m "build verified GPT Gateway macOS v2.1.1"
+          git add -f build/GPTGatewayLauncher build/GPTGatewayLauncher.sha256 dist/GPT-Gateway-macOS-v2.1.2.zip
+          git commit -m "build verified GPT Gateway macOS v2.1.2"
           git push
