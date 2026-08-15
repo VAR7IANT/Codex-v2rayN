@@ -22,9 +22,11 @@ Internet / OpenAI
 
 ## macOS app experience
 
-The installer creates a normal macOS application wrapper instead of leaving you with a raw shell script:
+The installer creates a normal macOS AppleScript applet instead of using a shell script as the app bundle's main executable:
 
 - **GPT Gateway.app** appears like a regular application and can be pinned to the Dock.
+- The wrapper is generated locally with macOS `osacompile` and does not intentionally depend on Rosetta.
+- On Apple silicon, the installer checks the generated applet executable for `arm64` support and reports the result.
 - A custom high-resolution Gateway icon is generated locally from the included SVG artwork.
 - Native macOS notifications show proxy-check and launch status.
 - Native macOS error alerts explain failures instead of silently closing.
@@ -94,5 +96,7 @@ Log file:
 ```
 
 If the launcher says ChatGPT is already running, use **ChatGPT > Quit ChatGPT** (or `Command-Q`) and launch GPT Gateway again.
+
+If macOS asks to install Rosetta for GPT Gateway, do not install Rosetta just for this wrapper. Update `Install-GPT-Gateway.sh` to the latest branch version and rerun the installer so the applet-based wrapper is rebuilt.
 
 If Finder keeps showing an old icon after reinstalling, relaunch Finder or remove/re-add GPT Gateway from the Dock. The launcher itself is unaffected.
