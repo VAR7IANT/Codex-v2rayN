@@ -2,8 +2,8 @@
 set -u
 
 # GPT Gateway for macOS
-# Launches the unified ChatGPT desktop app through a local V2Ray proxy
-# without changing persistent macOS system proxy settings.
+# Launches ChatGPT through a local V2Ray proxy without permanently changing
+# macOS system proxy settings.
 
 PROXY_HOST="${GPT_GATEWAY_PROXY_HOST:-127.0.0.1}"
 PROXY_PORT="${GPT_GATEWAY_PROXY_PORT:-10808}"
@@ -16,7 +16,7 @@ LOG_FILE="$LOG_DIR/GPT-Gateway.log"
 mkdir -p "$LOG_DIR"
 
 log() {
-  printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" | tee -a "$LOG_FILE"
+  printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" >> "$LOG_FILE"
 }
 
 show_error() {
@@ -24,7 +24,7 @@ show_error() {
   log "ERROR: $message"
   /usr/bin/osascript - "$message" >/dev/null 2>&1 <<'APPLESCRIPT' || true
 on run argv
-  display dialog (item 1 of argv) with title "GPT Gateway" buttons {"OK"} default button "OK" with icon stop
+  display alert "GPT Gateway" message (item 1 of argv) as critical buttons {"OK"} default button "OK"
 end run
 APPLESCRIPT
 }
@@ -64,14 +64,18 @@ if [[ -z "$APP_BIN" ]]; then
 fi
 log "App binary: $APP_BIN"
 
+# A running instance cannot inherit this launcher's temporary environment.
 if /usr/bin/pgrep -f "$APP_BIN" >/dev/null 2>&1; then
   show_error "ChatGPT is already running. Quit ChatGPT completely, then open GPT Gateway again so the new process can inherit the proxy."
   exit 1
 fi
 
+show_notification "Checking V2Ray on ${PROXY_HOST}:${PROXY_PORT}…"
 log "Checking SOCKS5 outbound access through ${PROXY_HOST}:${PROXY_PORT}"
+
+# socks5h keeps hostname resolution inside the proxy path.
 if ! /usr/bin/curl -sS -o /dev/null --max-time 8 --proxy "$SOCKS_PROXY" "https://chatgpt.com/"; then
-  show_error "V2Ray proxy check failed at ${PROXY_HOST}:${PROXY_PORT}. Make sure V2Ray is running and the SOCKS5 port is 10808."
+  show_error "V2Ray proxy check failed at ${PROXY_HOST}:${PROXY_PORT}. Make sure V2Ray is running and its SOCKS5 or mixed inbound is listening on port ${PROXY_PORT}."
   exit 1
 fi
 log "SOCKS5 HTTPS check passed"
@@ -82,8 +86,8 @@ export all_proxy="$SOCKS_PROXY"
 export NO_PROXY="localhost,127.0.0.1,::1"
 export no_proxy="$NO_PROXY"
 
-# Some ChatGPT/Codex child components prefer HTTP(S)_PROXY. If the same
-# V2Ray inbound is mixed and accepts HTTP CONNECT, expose those variables too.
+# If the same V2Ray inbound also accepts HTTP CONNECT, expose HTTP(S) proxy
+# variables as well. Otherwise keep the launch SOCKS-only.
 CHROMIUM_PROXY="$CHROMIUM_SOCKS_PROXY"
 if /usr/bin/curl -sS -o /dev/null --max-time 5 --proxy "$HTTP_PROXY_URL" "https://chatgpt.com/"; then
   export HTTP_PROXY="$HTTP_PROXY_URL"
@@ -102,14 +106,27 @@ fi
 if [[ "${1:-}" == "--check" ]]; then
   log "Check complete; nothing launched"
   printf '\nGPT Gateway check passed.\nProxy: %s\nApp: %s\n' "$SOCKS_PROXY" "$APP_BIN"
+  show_notification "V2Ray check passed. ChatGPT was not launched."
   exit 0
 fi
 
 log "Launching ChatGPT with process-scoped proxy"
-show_notification "Launching ChatGPT through V2Ray on ${PROXY_HOST}:${PROXY_PORT}"
 
-# Launch the executable directly so it inherits the environment. The Chromium
-# proxy flag additionally covers Electron/Chromium network traffic in the app.
-exec "$APP_BIN" \
+# Start ChatGPT as a child so it inherits this process environment, then let
+# GPT Gateway itself exit. This makes the temporary Gateway Dock icon disappear
+# while ChatGPT keeps running with the inherited proxy configuration.
+"$APP_BIN" \
   --proxy-server="$CHROMIUM_PROXY" \
-  --proxy-bypass-list="localhost;127.0.0.1;[::1]"
+  --proxy-bypass-list="localhost;127.0.0.1;[::1]" \
+  >> "$LOG_FILE" 2>&1 &
+APP_PID=$!
+
+sleep 1
+if ! /bin/kill -0 "$APP_PID" >/dev/null 2>&1; then
+  show_error "ChatGPT exited immediately after launch. Open ~/Library/Logs/GPT-Gateway.log for details."
+  exit 1
+fi
+
+log "ChatGPT started successfully (pid ${APP_PID})"
+show_notification "ChatGPT is running through V2Ray ${PROXY_HOST}:${PROXY_PORT}."
+exit 0
