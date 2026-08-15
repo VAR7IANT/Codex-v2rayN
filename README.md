@@ -9,12 +9,12 @@ Do **not** use GitHub's whole-branch `Download ZIP` for normal installation.
 Download this versioned package instead:
 
 ```text
-dist/GPT-Gateway-macOS-v2.1.1.zip
+dist/GPT-Gateway-macOS-v2.1.2.zip
 ```
 
 That exact ZIP is generated and then re-extracted/tested by the macOS ARM64 CI job before it is committed to the branch.
 
-Version `2.1.1` restores the user's original blue/purple neon GPT Gateway icon and removes the temporary replacement SVG.
+Version `2.1.2` keeps the original blue/purple neon GPT Gateway icon and fixes macOS Finder showing the generic application icon. The installer now builds the entire `.app` in a temporary directory, writes the icon metadata before the app becomes visible, publishes the completed bundle atomically, and re-registers it with LaunchServices.
 
 ## Default proxy
 
@@ -49,15 +49,27 @@ arch=arm64 translated=0
 
 before the package is accepted.
 
+## Icon handling
+
+The original user-provided icon lives at:
+
+```text
+assets/GPT-Gateway.png
+```
+
+The installer creates a complete multi-resolution `GPT-Gateway.icns`, embeds it in the bundle, sets both `CFBundleIconFile` and `CFBundleIconName`, and registers the finished app with LaunchServices.
+
+CI also asks `NSWorkspace` for the icon macOS actually resolves for the installed `.app` and fails the build if macOS returns the generic application icon.
+
 ## Install
 
-Extract `GPT-Gateway-macOS-v2.1.1.zip`, open Terminal in the extracted `GPT-Gateway-macOS-v2.1.1` folder, then run:
+Extract `GPT-Gateway-macOS-v2.1.2.zip`, open Terminal in the extracted `GPT-Gateway-macOS-v2.1.2` folder, then run:
 
 ```bash
 zsh Install-GPT-Gateway.sh
 ```
 
-The installer automatically restores executable permissions if the ZIP extractor removed them. It also verifies the launcher SHA-256, checks the `arm64` slice, installs the app, signs the local bundle ad-hoc, clears quarantine from the generated app, installs the original icon, and performs a native-execution self-test.
+The installer automatically restores executable permissions if the ZIP extractor removed them. It verifies the launcher SHA-256, checks the `arm64` slice, builds the complete app bundle off-screen, installs the original icon, signs the bundle ad-hoc, publishes it atomically to `~/Applications`, refreshes LaunchServices, clears quarantine, and performs a native-execution self-test.
 
 The installed app is:
 
@@ -71,7 +83,7 @@ Then completely quit ChatGPT with `Command-Q` and open **GPT Gateway**.
 
 The macOS workflow does more than compile the project:
 
-1. zsh, Python, and C syntax checks
+1. zsh, Python, Swift, and C syntax checks
 2. Universal `arm64 + x86_64` Mach-O build
 3. native Apple-silicon runtime self-test (`translated=0`)
 4. a local mock SOCKS5 server
@@ -80,8 +92,9 @@ The macOS workflow does more than compile the project:
 7. Chromium `--proxy-server` argument injection
 8. complete `.app` installation including the original icon
 9. `Info.plist`, architecture, icon, and code-sign validation
-10. creation of the versioned ZIP
-11. re-extraction of that exact ZIP followed by a second full installation and native self-test
+10. `NSWorkspace` verification that macOS resolves a non-generic app icon
+11. creation of the versioned ZIP
+12. re-extraction of that exact ZIP followed by a second installation, native self-test, and `NSWorkspace` icon check
 
 ## What happens on launch
 
