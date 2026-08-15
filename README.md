@@ -9,10 +9,12 @@ Do **not** use GitHub's whole-branch `Download ZIP` for normal installation.
 Download this versioned package instead:
 
 ```text
-dist/GPT-Gateway-macOS-v2.1.0.zip
+dist/GPT-Gateway-macOS-v2.1.1.zip
 ```
 
 That exact ZIP is generated and then re-extracted/tested by the macOS ARM64 CI job before it is committed to the branch.
+
+Version `2.1.1` restores the user's original blue/purple neon GPT Gateway icon and removes the temporary replacement SVG.
 
 ## Default proxy
 
@@ -49,13 +51,13 @@ before the package is accepted.
 
 ## Install
 
-Extract `GPT-Gateway-macOS-v2.1.0.zip`, open Terminal in the extracted `GPT-Gateway-macOS-v2.1.0` folder, then run:
+Extract `GPT-Gateway-macOS-v2.1.1.zip`, open Terminal in the extracted `GPT-Gateway-macOS-v2.1.1` folder, then run:
 
 ```bash
 zsh Install-GPT-Gateway.sh
 ```
 
-The installer automatically restores executable permissions if the ZIP extractor removed them. It also verifies the launcher SHA-256, checks the `arm64` slice, installs the app, signs the local bundle ad-hoc, clears quarantine from the generated app, and performs a native-execution self-test.
+The installer automatically restores executable permissions if the ZIP extractor removed them. It also verifies the launcher SHA-256, checks the `arm64` slice, installs the app, signs the local bundle ad-hoc, clears quarantine from the generated app, installs the original icon, and performs a native-execution self-test.
 
 The installed app is:
 
@@ -76,8 +78,8 @@ The macOS workflow does more than compile the project:
 5. a real `curl` request through that SOCKS5 server
 6. process-scoped `ALL_PROXY` injection into a fake ChatGPT executable
 7. Chromium `--proxy-server` argument injection
-8. complete `.app` installation
-9. `Info.plist`, architecture, and code-sign validation
+8. complete `.app` installation including the original icon
+9. `Info.plist`, architecture, icon, and code-sign validation
 10. creation of the versioned ZIP
 11. re-extraction of that exact ZIP followed by a second full installation and native self-test
 
