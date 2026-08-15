@@ -123,10 +123,11 @@ jobs:
           APP="$TEST_ROOT/GPT Gateway.app"
           test -x "$APP/Contents/MacOS/GPTGatewayLauncher"
           test -x "$APP/Contents/Resources/gateway.zsh"
+          test -f "$APP/Contents/Resources/GPT-Gateway.icns"
           plutil -lint "$APP/Contents/Info.plist"
           test "$(defaults read "$APP/Contents/Info" CFBundleExecutable)" = "GPTGatewayLauncher"
           test "$(defaults read "$APP/Contents/Info" LSRequiresNativeExecution)" = "1"
-          test "$(defaults read "$APP/Contents/Info" CFBundleShortVersionString)" = "2.1.0"
+          test "$(defaults read "$APP/Contents/Info" CFBundleShortVersionString)" = "2.1.1"
           lipo -archs "$APP/Contents/MacOS/GPTGatewayLauncher" | grep -q arm64
           lipo -archs "$APP/Contents/MacOS/GPTGatewayLauncher" | grep -q x86_64
           APP_SELF_TEST="$("$APP/Contents/MacOS/GPTGatewayLauncher" --native-self-test)"
@@ -137,7 +138,7 @@ jobs:
 
       - name: Build versioned download package
         run: |
-          PACKAGE_NAME="GPT-Gateway-macOS-v2.1.0"
+          PACKAGE_NAME="GPT-Gateway-macOS-v2.1.1"
           STAGE="$RUNNER_TEMP/$PACKAGE_NAME"
           rm -rf "$STAGE"
           mkdir -p "$STAGE/build" "$STAGE/src" "$STAGE/assets" dist
@@ -145,7 +146,7 @@ jobs:
           cp Install-GPT-Gateway.sh README.md "$STAGE/"
           cp build/GPTGatewayLauncher build/GPTGatewayLauncher.sha256 "$STAGE/build/"
           cp src/gateway.zsh "$STAGE/src/"
-          cp assets/GPT-Gateway.svg "$STAGE/assets/"
+          cp assets/GPT-Gateway.png "$STAGE/assets/"
           chmod +x "$STAGE/Install-GPT-Gateway.sh" "$STAGE/build/GPTGatewayLauncher" "$STAGE/src/gateway.zsh"
 
           rm -f "dist/$PACKAGE_NAME.zip"
@@ -154,7 +155,7 @@ jobs:
 
       - name: Verify exact packaged ZIP on Apple silicon
         run: |
-          PACKAGE_NAME="GPT-Gateway-macOS-v2.1.0"
+          PACKAGE_NAME="GPT-Gateway-macOS-v2.1.1"
           EXTRACT="$RUNNER_TEMP/package-verify"
           PACKAGE_APPS="$RUNNER_TEMP/PackageApplications"
           rm -rf "$EXTRACT" "$PACKAGE_APPS"
@@ -163,6 +164,7 @@ jobs:
 
           BUNDLE="$EXTRACT/$PACKAGE_NAME"
           test -f "$BUNDLE/build/GPTGatewayLauncher.sha256"
+          test -f "$BUNDLE/assets/GPT-Gateway.png"
           chmod +x "$BUNDLE/Install-GPT-Gateway.sh"
 
           GPT_GATEWAY_INSTALL_ROOT="$PACKAGE_APPS" \
@@ -170,6 +172,7 @@ jobs:
           /bin/zsh "$BUNDLE/Install-GPT-Gateway.sh"
 
           APP="$PACKAGE_APPS/GPT Gateway.app"
+          test -f "$APP/Contents/Resources/GPT-Gateway.icns"
           PACKAGE_SELF_TEST="$("$APP/Contents/MacOS/GPTGatewayLauncher" --native-self-test)"
           echo "$PACKAGE_SELF_TEST"
           echo "$PACKAGE_SELF_TEST" | grep -q 'arch=arm64'
@@ -179,13 +182,13 @@ jobs:
       - name: Commit verified macOS deliverables
         if: github.actor != 'github-actions[bot]'
         run: |
-          if [[ -z "$(git status --porcelain -- build/GPTGatewayLauncher build/GPTGatewayLauncher.sha256 dist/GPT-Gateway-macOS-v2.1.0.zip)" ]]; then
+          if [[ -z "$(git status --porcelain -- build/GPTGatewayLauncher build/GPTGatewayLauncher.sha256 dist/GPT-Gateway-macOS-v2.1.1.zip)" ]]; then
             echo "Verified deliverables are already current"
             exit 0
           fi
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -f build/GPTGatewayLauncher build/GPTGatewayLauncher.sha256 dist/GPT-Gateway-macOS-v2.1.0.zip
-          git commit -m "build verified GPT Gateway macOS v2.1.0"
+          git add -f build/GPTGatewayLauncher build/GPTGatewayLauncher.sha256 dist/GPT-Gateway-macOS-v2.1.1.zip
+          git commit -m "build verified GPT Gateway macOS v2.1.1"
           git push
