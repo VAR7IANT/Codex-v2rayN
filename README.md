@@ -1,89 +1,141 @@
-# Codex via v2rayN Launcher
+# GPT Gateway for macOS
 
-A lightweight Windows launcher that starts OpenAI Codex through a v2rayN SOCKS5 proxy without changing your system-wide proxy settings.
+A macOS-only launcher that starts the ChatGPT desktop app through a local V2Ray proxy without changing the persistent macOS system proxy.
+
+## Download
+
+Do **not** use GitHub's whole-branch `Download ZIP` for normal installation.
+
+Download this versioned package instead:
+
+```text
+dist/GPT-Gateway-macOS-v2.1.4.zip
+```
+
+That exact ZIP is generated and then re-extracted/tested by the macOS ARM64 CI job before it is committed to the branch.
+
+Version `2.1.4` removes the solid black matte outside the user-provided rounded-square artwork while preserving the icon interior. The PNG now has a real alpha channel, so Finder can composite the rounded icon cleanly on light or dark backgrounds. The installer builds the entire `.app` in a temporary directory, validates every icon representation and reverse-decodes the generated ICNS before the app becomes visible, publishes the completed bundle atomically, and then registers it with LaunchServices.
 
 ## Default proxy
 
-- Host: `127.0.0.1`
-- Port: `10808`
-- URL: `socks5://127.0.0.1:10808`
-
-The launcher normally discovers the current endpoint automatically. These values are only the fallback when no running v2rayN configuration can be read.
-
-## Features
-
-- Presents a clean three-stage launch screen with clear success and error states.
-- Uses a dedicated, high-resolution Windows launcher icon.
-- Detects the running v2rayN installation path and current SOCKS/mixed port automatically.
-- Completes a real SOCKS5 handshake instead of trusting an open TCP port.
-- Tests outbound HTTPS through the selected v2rayN node in `--check` mode using a native SOCKS5/TLS probe with certificate validation.
-- Automatically finds the newest installed `OpenAI.Codex` Windows app.
-- Applies the proxy only to this Codex launch.
-- Sets proxy environment variables according to the detected SOCKS or mixed inbound and clears incompatible stale values.
-- Does not permanently change Windows environment variables or system proxy settings.
-
-## Install the launcher
-
-Double-click `Install-Launcher.bat`. It creates a **Codex Gateway** shortcut on the Windows desktop using `assets/Codex-v2rayN.ico`.
-
-Windows batch files cannot embed custom icons directly. The generated shortcut is the launcher that carries the custom icon and starts `Codex-v2rayN.bat`.
-
-## Usage
-
-1. Start v2rayN.
-2. Close any Codex windows that are already running.
-3. Double-click the **Codex Gateway** desktop shortcut.
-4. Wait for all three checks to complete.
-
-To verify the proxy and Codex installation without launching the app, run:
-
-```bat
-Codex-v2rayN.bat --check
+```text
+127.0.0.1:10808
+socks5h://127.0.0.1:10808
 ```
 
-## Proxy endpoint detection
+## Architecture
 
-The launcher resolves the endpoint in this order:
+This branch contains no Windows BAT, PowerShell, Windows proxy helper, Windows test, or Windows icon code.
 
-1. Active core configuration at `binConfigs/config.json` beside the running `v2rayN.exe` or proxy core.
-2. v2rayN GUI configuration at `guiConfigs/guiNConfig.json`.
-3. The default fallback in `Codex-v2rayN.bat`.
+`GPT Gateway.app` uses a real Mach-O executable as `CFBundleExecutable`. It does not use a shell script or AppleScript applet as the application entry point.
 
-This supports portable v2rayN folders and custom local ports without storing an installation path in the launcher.
-
-When several SOCKS/mixed inbounds are configured, the launcher performs a SOCKS5 handshake and selects the first active endpoint. It also probes the selected port for HTTP proxy support so a modern mixed inbound is recognized even when the GUI labels it as SOCKS. Only loopback listeners are accepted; non-local addresses are rejected. IPv4 and IPv6 loopback addresses are supported.
-
-For a `mixed` inbound, the launcher sets `ALL_PROXY`, `HTTP_PROXY`, and `HTTPS_PROXY`. For a SOCKS-only inbound, it sets `ALL_PROXY` and clears stale HTTP proxy variables. Local callbacks are excluded with `NO_PROXY`.
-
-To change the fallback endpoint, edit:
-
-```bat
-set "DEFAULT_PROXY_HOST=127.0.0.1"
-set "DEFAULT_PROXY_PORT=10808"
-```
-
-## How it works
+The launcher is built as a Universal Mach-O containing:
 
 ```text
-Codex Windows App
-        |
-        v
-ALL_PROXY=socks5://127.0.0.1:10808
-        |
-        v
-v2rayN
-        |
-        v
-Current proxy node
-        |
-        v
-Internet / OpenAI
+arm64 x86_64
 ```
 
-## Notes
+The app also sets:
 
-This launcher only affects the Codex process tree started from it. Closing that Codex session removes the temporary proxy environment with the process; no permanent Windows network settings are changed.
+```text
+LSRequiresNativeExecution = true
+```
 
-Codex must be closed before a proxied launch. An already-running process cannot inherit the temporary proxy variables, so the launcher stops with a clear message instead of reporting a misleading success.
+On the macOS ARM64 CI runner, both the raw launcher and the launcher copied into the final application bundle must report:
 
-The environment variables route the desktop process and compatible child processes. Codex sandbox networking has its own configuration and permission controls; see the [official OpenAI configuration reference](https://learn.chatgpt.com/docs/config-file/config-reference) for `features.network_proxy` and permission-profile network settings.
+```text
+arch=arm64 translated=0
+```
+
+before the package is accepted.
+
+## Icon handling
+
+The original user-provided icon lives at:
+
+```text
+assets/GPT-Gateway.png
+```
+
+The installer creates a complete multi-resolution `GPT-Gateway.icns`, reverse-decodes it with `iconutil`, embeds it in the bundle, sets `CFBundleIconFile` to that exact file, and registers the finished app with LaunchServices. It deliberately omits `CFBundleIconName`, because that key is for an asset-catalog icon and this bundle does not contain `Assets.car`.
+
+CI also asks `NSWorkspace` for the icon macOS actually resolves for the installed `.app` and fails the build if macOS returns the generic application icon.
+
+## Install
+
+Extract `GPT-Gateway-macOS-v2.1.4.zip`, open Terminal in the extracted `GPT-Gateway-macOS-v2.1.4` folder, then run:
+
+```bash
+zsh Install-GPT-Gateway.sh
+```
+
+The installer automatically restores executable permissions if the ZIP extractor removed them. It verifies the launcher SHA-256, checks the `arm64` slice, builds the complete app bundle off-screen, installs the original icon, signs the bundle ad-hoc, publishes it atomically to `~/Applications`, refreshes LaunchServices, clears quarantine, and performs a native-execution self-test.
+
+The installed app is:
+
+```text
+~/Applications/GPT Gateway.app
+```
+
+Then completely quit ChatGPT with `Command-Q` and open **GPT Gateway**.
+
+## What CI tests
+
+The macOS workflow does more than compile the project:
+
+1. zsh, Python, Swift, and C syntax checks
+2. Universal `arm64 + x86_64` Mach-O build
+3. native Apple-silicon runtime self-test (`translated=0`)
+4. a local mock SOCKS5 server
+5. a real `curl` request through that SOCKS5 server
+6. process-scoped `ALL_PROXY` injection into a fake ChatGPT executable
+7. Chromium `--proxy-server` argument injection
+8. complete `.app` installation including the original icon
+9. `Info.plist`, architecture, ICNS reverse-decode, and code-sign validation
+10. `NSWorkspace` verification that macOS resolves the icon derived from the source PNG, not a generic, stale, blank, or black icon
+11. creation of the versioned ZIP
+12. re-extraction of that exact ZIP followed by a second installation, native self-test, and `NSWorkspace` icon check
+
+## What happens on launch
+
+1. the native `GPTGatewayLauncher` starts
+2. it runs the bundled `gateway.zsh`
+3. the script finds `ChatGPT.app`
+4. it checks V2Ray through `127.0.0.1:10808`
+5. it exports process-scoped SOCKS5 proxy variables
+6. if port `10808` also accepts HTTP proxy traffic, HTTP/HTTPS variables are enabled too
+7. ChatGPT starts with the proxy environment and Chromium proxy argument
+8. GPT Gateway exits
+
+No persistent macOS network preference is modified.
+
+## Check without launching ChatGPT
+
+```bash
+"$HOME/Applications/GPT Gateway.app/Contents/MacOS/GPTGatewayLauncher" --check
+```
+
+## Verify native execution
+
+```bash
+"$HOME/Applications/GPT Gateway.app/Contents/MacOS/GPTGatewayLauncher" --native-self-test
+```
+
+On Apple silicon, expected output is:
+
+```text
+arch=arm64 translated=0
+```
+
+## Logs
+
+```text
+~/Library/Logs/GPT-Gateway.log
+```
+
+## Requirements
+
+- macOS 14 or newer for the current ChatGPT desktop app
+- Apple silicon or Intel Mac supported by the installed ChatGPT build
+- ChatGPT.app installed in `/Applications` or `~/Applications`
+- V2Ray SOCKS5 or mixed inbound listening on `127.0.0.1:10808`
