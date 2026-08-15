@@ -8,7 +8,7 @@ A small macOS launcher for the unified OpenAI ChatGPT desktop app. It launches C
 ChatGPT.app
     |
     v
-GPT Gateway process environment + Chromium proxy flag
+GPT Gateway process environment
     |
     v
 socks5://127.0.0.1:10808
@@ -19,6 +19,17 @@ V2Ray
     v
 Internet / OpenAI
 ```
+
+## macOS app experience
+
+The installer creates a normal macOS application wrapper instead of leaving you with a raw shell script:
+
+- **GPT Gateway.app** appears like a regular application and can be pinned to the Dock.
+- A custom high-resolution Gateway icon is generated locally from the included SVG artwork.
+- Native macOS notifications show proxy-check and launch status.
+- Native macOS error alerts explain failures instead of silently closing.
+- After ChatGPT starts successfully, GPT Gateway exits so its temporary Dock icon disappears and only ChatGPT remains running.
+- No Homebrew, Python, ImageMagick, or Xcode dependency is required for the wrapper/icon installation.
 
 ## Install
 
@@ -35,7 +46,9 @@ The installer creates:
 ~/Applications/GPT Gateway.app
 ```
 
-Then double-click **GPT Gateway** whenever you want to start ChatGPT through V2Ray.
+Then double-click **GPT Gateway**, or drag it into the Dock, whenever you want to start ChatGPT through V2Ray.
+
+Re-running the installer safely replaces the generated GPT Gateway wrapper with the latest version from this folder.
 
 ## Requirements
 
@@ -49,9 +62,10 @@ The launcher also recognizes the older standalone `Codex.app` path as a fallback
 
 1. Finds the ChatGPT desktop executable.
 2. Refuses to continue when ChatGPT is already running, because an existing process cannot inherit the new proxy environment.
-3. Performs an outbound HTTPS request through `socks5h://127.0.0.1:10808`.
+3. Performs an outbound HTTPS request through `socks5h://127.0.0.1:10808`; DNS resolution stays on the proxy path.
 4. Detects whether port `10808` also accepts HTTP proxy traffic (mixed inbound).
-5. Starts ChatGPT directly with temporary proxy environment variables and an Electron/Chromium `--proxy-server` flag.
+5. Exposes process-scoped proxy environment variables to the new ChatGPT process.
+6. Starts ChatGPT directly, verifies the process survived startup, then exits GPT Gateway.
 
 No persistent macOS proxy preference is modified.
 
@@ -80,3 +94,5 @@ Log file:
 ```
 
 If the launcher says ChatGPT is already running, use **ChatGPT > Quit ChatGPT** (or `Command-Q`) and launch GPT Gateway again.
+
+If Finder keeps showing an old icon after reinstalling, relaunch Finder or remove/re-add GPT Gateway from the Dock. The launcher itself is unaffected.
