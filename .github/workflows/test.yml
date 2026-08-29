@@ -29,3 +29,6 @@ jobs:
       - name: Test proxy detection and SOCKS5 handshake
         shell: powershell
         run: .\tests\Test-ProxyScripts.ps1
+      - name: Test AppX selection and executable resolution
+        shell: powershell
+        run: .\tests\Test-AppSupport.ps1

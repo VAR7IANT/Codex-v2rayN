@@ -1,39 +1,68 @@
 [CmdletBinding()]
 param(
-    [ValidateSet('Desktop', 'Project')]
-    [string]$Location = 'Desktop'
+    [ValidateSet('Desktop', 'StartMenu')]
+    [string]$Location = 'Desktop',
+    [switch]$Uninstall
 )
 
 $ErrorActionPreference = 'Stop'
 
-$projectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
-$launcherPath = Join-Path $projectRoot 'Codex-v2rayN.bat'
+$projectRoot = $PSScriptRoot
+$gatewayPath = Join-Path $projectRoot 'Codex-v2rayN.bat'
 $iconPath = Join-Path $projectRoot 'assets\Codex-v2rayN.ico'
-
-if (-not (Test-Path -LiteralPath $launcherPath)) {
-    throw "Launcher not found: $launcherPath"
-}
-
-if (-not (Test-Path -LiteralPath $iconPath)) {
-    throw "Icon not found: $iconPath"
-}
-
-$destination = if ($Location -eq 'Desktop') {
-    [Environment]::GetFolderPath('Desktop')
+$shortcutName = 'Codex Gateway - v2rayN.lnk'
+$destination = if ($Location -eq 'StartMenu') {
+    [Environment]::GetFolderPath([Environment+SpecialFolder]::Programs)
 } else {
-    $projectRoot
+    [Environment]::GetFolderPath([Environment+SpecialFolder]::Desktop)
+}
+$shortcutPath = Join-Path $destination $shortcutName
+
+if ([string]::IsNullOrWhiteSpace($destination) -or -not (Test-Path -LiteralPath $destination -PathType Container)) {
+    throw "The $Location shortcut directory is unavailable: $destination"
 }
 
-$shortcutPath = Join-Path $destination 'Codex Gateway.lnk'
-$shell = New-Object -ComObject WScript.Shell
-$shortcut = $shell.CreateShortcut($shortcutPath)
-$shortcut.TargetPath = $env:ComSpec
-$shortcut.Arguments = '/d /c ""{0}""' -f $launcherPath
-$shortcut.WorkingDirectory = $projectRoot
-$shortcut.IconLocation = "$iconPath,0"
-$shortcut.Description = 'Launch Codex through the local v2rayN SOCKS5 proxy'
-$shortcut.WindowStyle = 1
-$shortcut.Save()
+if ($Uninstall) {
+    if (Test-Path -LiteralPath $shortcutPath -PathType Leaf) {
+        Remove-Item -LiteralPath $shortcutPath -Force
+        Write-Host 'Launcher shortcut removed:' -ForegroundColor Green
+        Write-Host $shortcutPath
+    } else {
+        Write-Host 'Launcher shortcut is not installed:' -ForegroundColor Cyan
+        Write-Host $shortcutPath
+    }
+    exit 0
+}
 
-Write-Host "Launcher shortcut created:" -ForegroundColor Green
+if (-not (Test-Path -LiteralPath $gatewayPath -PathType Leaf)) {
+    throw "Gateway entry point not found: $gatewayPath"
+}
+if (-not (Test-Path -LiteralPath $iconPath -PathType Leaf)) {
+    throw "Launcher icon not found: $iconPath"
+}
+
+$shell = $null
+$shortcut = $null
+try {
+    $shell = New-Object -ComObject WScript.Shell
+    $shortcut = $shell.CreateShortcut($shortcutPath)
+    $shortcut.TargetPath = $env:ComSpec
+    $shortcut.Arguments = '/d /c ""{0}""' -f $gatewayPath
+    $shortcut.WorkingDirectory = $projectRoot
+    $shortcut.IconLocation = "$iconPath,0"
+    $shortcut.Description = 'Launch ChatGPT / Codex with a session-only v2rayN proxy'
+    $shortcut.WindowStyle = 1
+    $shortcut.Save()
+} finally {
+    if ($shortcut) { [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($shortcut) }
+    if ($shell) { [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($shell) }
+}
+
+if (-not (Test-Path -LiteralPath $shortcutPath -PathType Leaf)) {
+    throw "The shortcut was not created: $shortcutPath"
+}
+
+Write-Host 'Launcher shortcut created:' -ForegroundColor Green
 Write-Host $shortcutPath
+Write-Host 'Target gateway:' -ForegroundColor Cyan
+Write-Host $gatewayPath

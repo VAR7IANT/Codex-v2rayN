@@ -2,11 +2,13 @@
 param(
     [string]$DefaultHost = '127.0.0.1',
     [ValidateRange(1, 65535)][int]$DefaultPort = 10808,
-    [string]$V2rayNRoot
+    [string]$V2rayNRoot,
+    [ValidateSet('Text', 'Object')][string]$OutputFormat = 'Text'
 )
 
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'ProxySupport.ps1')
+$script:ResolverWarnings = [Collections.Generic.List[string]]::new()
 
 function New-ProxyCandidate {
     param(
@@ -60,6 +62,7 @@ function Get-RuntimeCandidates {
             New-ProxyCandidate -Address $inbound.listen -Port $port -Kind $kind -Source 'v2rayN runtime config'
         }
     } catch {
+        $script:ResolverWarnings.Add("Could not read runtime config '$ConfigPath': $($_.Exception.Message)")
         return
     }
 }
@@ -77,6 +80,7 @@ function Get-GuiCandidates {
             New-ProxyCandidate -Address $DefaultHost -Port $inbound.LocalPort -Kind $inbound.Protocol -Source 'v2rayN GUI config'
         }
     } catch {
+        $script:ResolverWarnings.Add("Could not read GUI config '$ConfigPath': $($_.Exception.Message)")
         return
     }
 }
@@ -111,6 +115,7 @@ function Get-DetectedRoots {
         if (Test-Path -LiteralPath $V2rayNRoot) {
             return (Resolve-Path -LiteralPath $V2rayNRoot).Path
         }
+        $script:ResolverWarnings.Add("The supplied v2rayN root does not exist: $V2rayNRoot")
         return
     }
 
@@ -118,7 +123,10 @@ function Get-DetectedRoots {
     foreach ($processName in @('v2rayN', 'sing-box', 'xray', 'mihomo')) {
         foreach ($process in @(Get-Process $processName -ErrorAction SilentlyContinue | Sort-Object StartTime -Descending)) {
             $path = $null
-            try { $path = $process.Path } catch { continue }
+            try { $path = $process.Path } catch {
+                $script:ResolverWarnings.Add("Could not read the executable path for process $($process.Id) ($processName): $($_.Exception.Message)")
+                continue
+            }
             $root = Find-V2rayNRoot $path
             if ($root -and -not $roots.Contains($root)) {
                 $roots.Add($root)
@@ -155,6 +163,12 @@ if ($selected) {
 } elseif ($uniqueCandidates.Count -gt 0) {
     $selected = $uniqueCandidates[0]
     $selected.Source += ' (inactive)'
+}
+
+$selected | Add-Member -NotePropertyName Warnings -NotePropertyValue @($script:ResolverWarnings) -Force
+
+if ($OutputFormat -eq 'Object') {
+    return $selected
 }
 
 '{0}|{1}|{2}|{3}|{4}' -f $selected.Host, $selected.Port, $selected.Kind, $selected.UriHost, $selected.Source
