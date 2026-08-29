@@ -12,11 +12,16 @@ if /i "%~1"=="--check" (
     set "GATEWAY_MODE=Check"
     goto run
 )
+if /i "%~1"=="--settings" (
+    if not "%~2"=="" goto usage
+    set "GATEWAY_MODE=Settings"
+    goto run
+)
 
 :usage
 color 0C
 echo.
-echo Usage: %~nx0 [--check]
+echo Usage: %~nx0 [--check ^| --settings]
 echo.
 exit /b 64
 

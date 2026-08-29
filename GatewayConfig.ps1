@@ -10,4 +10,5 @@ $GatewayConfig = [ordered]@{
     HealthCheckUrl         = 'https://api.openai.com/v1/models'
     ProxyProbeTimeoutMs    = 1500
     LaunchTimeoutSeconds   = 15
+    UserAppsPath           = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'CodexGateway\apps.json'
 }

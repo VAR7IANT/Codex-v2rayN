@@ -50,7 +50,7 @@ try {
     $shortcut.Arguments = '/d /c ""{0}""' -f $gatewayPath
     $shortcut.WorkingDirectory = $projectRoot
     $shortcut.IconLocation = "$iconPath,0"
-    $shortcut.Description = 'Launch ChatGPT / Codex with a session-only v2rayN proxy'
+    $shortcut.Description = 'Launch the default Gateway application with a session-only v2rayN proxy'
     $shortcut.WindowStyle = 1
     $shortcut.Save()
 } finally {

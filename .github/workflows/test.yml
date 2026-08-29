@@ -32,3 +32,9 @@ jobs:
       - name: Test AppX selection and executable resolution
         shell: powershell
         run: .\tests\Test-AppSupport.ps1
+      - name: Test custom application profiles
+        shell: powershell
+        run: .\tests\Test-AppProfiles.ps1
+      - name: Test localization resources
+        shell: powershell
+        run: .\tests\Test-Localization.ps1

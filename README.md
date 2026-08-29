@@ -1,72 +1,127 @@
 # Codex Gateway - v2rayN
 
-当前正式版本：**v1.0.0**。项目版本的唯一来源是根目录中的 `VERSION` 文件，Git release tag 使用相同版本并加 `v` 前缀。
+当前项目版本：**v1.1.0**。根目录中的 `VERSION` 是 Gateway 运行时读取的版本来源。
 
-这是一个仅使用 Windows 自带 CMD 与 Windows PowerShell 的轻量 Gateway。它动态寻找当前安装的 ChatGPT / Codex Windows App，并让本次启动的应用进程树通过 v2rayN 访问网络。
+这是一个仅使用 Windows 自带 CMD 与 Windows PowerShell 的轻量应用 Gateway。它为本次启动的应用进程设置 v2rayN 代理环境，不修改 Windows 系统代理，也不永久写入用户或系统环境变量。
 
-默认选择策略是：安装了 `OpenAI.CodexBeta` 时优先启动 Beta；Beta 未安装时自动回退到 `OpenAI.Codex` Stable。项目不绑定 AppX 版本号，也不会修改有问题的 Stable 应用本身。
+默认应用仍然是 ChatGPT / Codex。现在也可以在设置中通过 `.exe` 路径添加其他 Windows 应用，并将其中任意一个设为默认应用。
 
-## 功能
+## 日常启动
 
-- 动态读取 AppX 包，不依赖 `OpenAI.CodexBeta_26.x.x.x_x64_...` 一类固定目录。
-- 优先从 AppX Manifest 获取真实 `Executable`，Manifest 不可用时才检查已知相对路径。
-- 正确处理 `ChatGPT (Beta).exe` 中的空格和括号。
-- 从运行中的 v2rayN 或其 core 配置自动发现本地 SOCKS/mixed inbound；默认回退为 `127.0.0.1:10808`。
-- 启动前完成 SOCKS5 握手、AppX/文件检查和现有进程检查。
-- 启动后等待并确认 WindowsApps 中的目标进程真正出现。
-- `--check` 模式额外验证通过 SOCKS5 到 OpenAI 的 HTTPS，不启动应用。
-- 每日写入轻量日志 `logs\gateway-YYYY-MM-DD.log`。
-- 不修改 Windows 系统代理，不永久写入用户或系统环境变量。
-
-## 文件结构
-
-| 文件 | 职责 |
-|---|---|
-| `Codex-v2rayN.bat` | 最薄入口：解析 `--check` 并调用 PowerShell。 |
-| `Launch-CodexApp.ps1` | 三阶段 UI、会话代理环境、健康检查、启动流程与日志。 |
-| `GatewayConfig.ps1` | 集中配置 Beta/Stable 策略、fallback endpoint 和超时。 |
-| `VERSION` | 项目版本号的唯一来源。 |
-| `AppSupport.ps1` | AppX 包选择、Manifest executable 解析、CIM 进程识别与启动验证。 |
-| `Resolve-v2rayNProxy.ps1` | 从运行中的 v2rayN/core 配置解析并选择 endpoint。 |
-| `ProxySupport.ps1` | SOCKS5、HTTP mixed 探测和 SOCKS5/TLS 健康检查。 |
-| `Test-ProxyEndpoint.ps1` | 可单独调用的 endpoint 检查工具。 |
-| `Install-Launcher.bat/.ps1` | 安装或卸载桌面/开始菜单快捷方式。 |
-| `assets\` | 快捷方式图标。 |
-| `tests\` | 无第三方依赖的 PowerShell 测试。 |
-
-## 安装启动器
-
-双击：
-
-```bat
-Install-Launcher.bat
-```
-
-默认在桌面创建名为 **Codex Gateway - v2rayN** 的快捷方式。快捷方式始终调用当前项目目录中的 `Codex-v2rayN.bat`，不会绑定 Beta 或 Stable 的具体 exe。
-
-如需安装到开始菜单，在命令行运行：
-
-```bat
-Install-Launcher.bat --start-menu
-```
-
-项目目录移动后，请重新运行安装脚本，以便快捷方式指向新位置。
-
-## 正常启动
-
-1. 启动 v2rayN，并确保本地 SOCKS 或 mixed inbound 可用。
-2. 完全关闭已经运行的 ChatGPT / Codex Beta 与 Stable。
-3. 双击 **Codex Gateway - v2rayN**，或运行：
+双击 **Codex Gateway - v2rayN** 或运行：
 
 ```bat
 Codex-v2rayN.bat
 ```
 
-Gateway 会依次显示：
+启动后会显示一个简短的等待入口，默认时长为 2 秒：
 
-1. `[1/3]` v2rayN SOCKS5 handshake。
-2. `[2/3]` 实际选择的 Variant、版本、Package Name 与 Executable。
-3. `[3/3]` 现有实例检查、启动和进程出现验证。
+```text
+[S] Settings    [Enter] Launch now
+Auto launch in 2 seconds...
+```
+
+- 等待期间按 `S`：进入设置模式。
+- 等待期间按 `Enter`：跳过等待，立即启动默认应用。
+- 不按任何键：倒计时结束后自动启动默认应用。
+- 非交互终端无法读取快捷键时：直接启动，不额外等待。
+
+平时无需选择应用。Gateway 会记住默认应用，只有按 `S` 或主动运行 `--settings` 时才进入设置。
+
+## 设置模式
+
+可以在启动等待期间按 `S`，也可以直接运行：
+
+```bat
+Codex-v2rayN.bat --settings
+```
+
+设置界面支持：
+
+- 通过数字将某个应用设为默认应用。
+- 按 `A`，通过 `.exe` 文件路径添加应用。
+- 按 `E`，修改自定义应用的名称、路径、参数或工作目录。
+- 按 `D`，删除自定义应用。
+- 按 `L`，在简体中文与 English 之间切换界面语言。
+- 按 `T`，设置启动等待时长，单位为秒；允许 `0`–`60`，`0` 表示立即启动。
+- 按 `Enter`，保存设置并启动当前默认应用。
+- 按 `Q`，保存设置并退出，不启动应用。
+
+内建的 `ChatGPT / Codex` Profile 不可删除。自定义应用配置保存在：
+
+```text
+%LOCALAPPDATA%\CodexGateway\apps.json
+```
+
+每次覆盖配置前会保留一个 `apps.json.bak`。配置与项目脚本分离，因此解压或升级 Gateway 不会覆盖用户的应用列表。
+
+等待时长也保存在这个配置文件中。旧版 `apps.json` 没有该字段时会自动采用 2 秒，无需手动迁移。设置为 `0` 后仍可通过 `Codex-v2rayN.bat --settings` 再次进入设置。
+
+## 语言选择
+
+Gateway 内置两种界面语言：
+
+- 简体中文：`zh-CN`
+- English：`en-US`
+
+首次运行跟随 Windows UI 语言；非中文系统默认使用 English。进入设置后按 `L` 可随时切换，选择会写入 `apps.json`，之后启动自动沿用，不会每次询问。
+
+启动快捷键、设置菜单、三阶段状态、成功提示和主要错误原因都会随语言切换。包名、路径、协议名和底层 Windows/PowerShell 异常保留原始技术文本，方便排查。
+
+## 添加自定义应用
+
+在设置中按 `A`，然后粘贴 `.exe` 的完整路径。路径可以包含空格、括号和非 ASCII 字符，也可以把 EXE 文件拖入终端窗口。
+
+每个自定义应用可以保存：
+
+- 显示名称；
+- executable 路径；
+- 可选启动参数；
+- 可选工作目录，留空时使用 executable 所在目录。
+
+Gateway 会在启动前确认文件和工作目录确实存在，通过 `Get-CimInstance Win32_Process` 检查相同 executable 是否已经运行，并在启动后确认匹配的进程真正出现。
+
+已有实例无法继承本次创建的代理环境，因此检测到相同应用正在运行时，Gateway 会要求先关闭它，而不会复用现有进程。
+
+## 可选代理参数占位符
+
+有些应用会读取 `ALL_PROXY`、`HTTP_PROXY` 和 `HTTPS_PROXY`；有些应用则需要自己的命令行代理参数。自定义应用的启动参数支持：
+
+| 占位符 | 示例结果 |
+|---|---|
+| `{proxy_host}` | `127.0.0.1` |
+| `{proxy_port}` | `10808` |
+| `{socks_proxy}` | `socks5://127.0.0.1:10808` |
+| `{http_proxy}` | `http://127.0.0.1:10808` |
+
+示例：
+
+```text
+--proxy-server={socks_proxy}
+```
+
+Gateway 会在启动前使用实际检测到的 endpoint 替换这些占位符。参数内容不会显示在正常启动界面，也不会写入日志。不要把密码、token 或其他秘密直接写入应用参数配置。
+
+环境变量和命令行参数是否生效最终取决于目标应用自身的代理支持；Gateway 不会注入或修改第三方应用代码。
+
+## ChatGPT / Codex 自动选择
+
+内建 Codex Profile 保留原有动态逻辑：
+
+1. 默认优先查询 `OpenAI.CodexBeta`。
+2. Beta 未安装时自动回退 `OpenAI.Codex` Stable。
+3. 使用 `Get-AppxPackage` 获取当前包，不绑定版本目录。
+4. 优先从 AppX Manifest 获取真实 executable。
+5. Manifest 不可用时检查 `app\ChatGPT (Beta).exe` 或 `app\ChatGPT.exe` fallback。
+
+`GatewayConfig.ps1` 中的 `AppPreference` 支持：
+
+| 值 | 行为 |
+|---|---|
+| `PreferBeta` | Beta 优先，不存在时使用 Stable。 |
+| `PreferStable` | Stable 优先，不存在时使用 Beta。 |
+| `BetaOnly` | 只允许 Beta。 |
+| `StableOnly` | 只允许 Stable。 |
 
 ## 只检查，不启动
 
@@ -74,40 +129,19 @@ Gateway 会依次显示：
 Codex-v2rayN.bat --check
 ```
 
-该模式只检查：
+`--check` 不显示启动快捷键入口，也不会启动应用。它检查：
 
-- v2rayN SOCKS5 endpoint；
-- 通过该 SOCKS5 endpoint 到 OpenAI 的 HTTPS；
-- 可用的 AppX 包；
-- 最终 executable 是否存在。
+- v2rayN SOCKS5 handshake；
+- 通过 SOCKS5 到配置的 HTTPS 健康检查地址；
+- 当前默认应用配置；
+- AppX 包或自定义 executable；
+- executable 和工作目录是否存在。
 
-HTTP `401`、`403` 或其他有效 HTTP 状态仍代表 HTTPS/TLS 与代理路由可达；健康检查不会发送 token、API key 或 cookie。
+OpenAI 健康检查返回 HTTP `401` 或 `403` 仍代表代理、TLS 和目标服务器可达；Gateway 不发送 API key、token 或 cookie。
 
-## Beta / Stable 选择逻辑
+## 代理作用域
 
-编辑 `GatewayConfig.ps1` 顶部唯一的 `AppPreference` 值：
-
-```powershell
-$GatewayConfig = [ordered]@{
-    AppPreference = 'PreferBeta'
-    # ...
-}
-```
-
-支持四种策略：
-
-| 值 | 行为 |
-|---|---|
-| `PreferBeta` | 默认。Beta 已安装则用 Beta，否则用 Stable。 |
-| `PreferStable` | Stable 已安装则用 Stable，否则用 Beta。 |
-| `BetaOnly` | 只允许 Beta；未安装则停止。 |
-| `StableOnly` | 只允许 Stable；未安装则停止。 |
-
-选择完成后，Gateway 通过 `Get-AppxPackage` 获取当前安装位置，通过 AppX Manifest 获取实际 executable。只有 Manifest 无法解析或其中路径不存在时，才使用 `app\ChatGPT (Beta).exe` 或 `app\ChatGPT.exe` fallback。不会写死任何版本目录。
-
-## 代理工作原理
-
-Gateway 在自己的 PowerShell 进程内设置下列环境变量，随后由新启动的 ChatGPT / Codex 子进程继承：
+mixed inbound 默认设置：
 
 ```text
 ALL_PROXY=socks5://127.0.0.1:10808
@@ -120,65 +154,47 @@ NO_PROXY=localhost,127.0.0.1,::1
 no_proxy=localhost,127.0.0.1,::1
 ```
 
-当 endpoint 仅支持 SOCKS5 时，只设置 `ALL_PROXY/all_proxy`，并清除 Gateway 当前进程中继承来的 HTTP proxy 变量；当检测为 mixed inbound 时，同一端口同时用于 SOCKS5 与 HTTP/HTTPS。
-
-这些变量的作用域仅限 Gateway 及其新启动的子进程。脚本不调用 Windows 系统代理设置，不使用 `setx`，不写注册表中的用户代理配置，也不会污染其他终端或应用。Gateway 进程退出后，它自身的临时环境随之消失；已启动应用保留启动时继承的副本。
+这些变量只存在于 Gateway PowerShell 进程及它启动的子进程中。项目不使用 `setx`，不修改 Windows 系统代理，不写注册表代理配置，也不会影响其他终端或应用。
 
 ## Endpoint 自动发现
 
-解析顺序如下：
+Gateway 按以下顺序查找本地 endpoint：
 
-1. 从运行中的 `v2rayN.exe`、`sing-box`、`xray` 或 `mihomo` 反查 v2rayN 根目录。
-2. 检查 `binConfigs\config.json` 中的 runtime inbound。
-3. 检查 `guiConfigs\guiNConfig.json` 中的 GUI inbound。
+1. 从运行中的 `v2rayN.exe`、`sing-box`、`xray` 或 `mihomo` 定位 v2rayN 根目录。
+2. 检查 `binConfigs\config.json` runtime inbound。
+3. 检查 `guiConfigs\guiNConfig.json` GUI inbound。
 4. 使用 `GatewayConfig.ps1` 中的 fallback：`127.0.0.1:10808`。
 
-候选地址只接受本机 loopback。Gateway 会对候选端口执行真实 SOCKS5 handshake，并额外探测是否也支持 HTTP CONNECT，以识别 mixed inbound。
+候选地址只接受 loopback。Gateway 会执行真实 SOCKS5 handshake，并探测同一端口是否支持 HTTP CONNECT，以识别 mixed inbound。
 
-## 日志
+## 可调整配置
 
-日志位于：
-
-```text
-logs\gateway-YYYY-MM-DD.log
-```
-
-记录启动时间、模式、endpoint、包名、版本、最终 executable、启动/检查结果与错误消息。日志不枚举或记录完整环境变量，也不记录 token、API key、cookie 或密码。`logs\` 已加入 `.gitignore`。
-
-## 常见问题
-
-### ChatGPT / Codex 已在运行怎么办？
-
-完全退出所有 Beta 和 Stable 实例（包括可能仍在后台运行的进程），再运行 Gateway。已有进程无法继承本次创建的代理环境，所以 Gateway 会停止，而不会复用它。
-
-进程识别优先使用 `Get-CimInstance Win32_Process` 的 `ExecutablePath`/`CommandLine` 与 `WindowsApps\OpenAI.CodexBeta_*`、`WindowsApps\OpenAI.Codex_*` 匹配。权限不足导致路径为空时，会对已知应用进程名采用保守检测，并在错误信息中说明识别依据。
-
-### v2rayN 未启动怎么办？
-
-先启动 v2rayN，确认 core 与所选节点正常，再重试。错误会显示实际检测的主机、端口和来源。
-
-### 10808 变化怎么办？
-
-正常情况下 Gateway 会从运行中的 v2rayN 配置自动读取新端口。如果配置路径无法发现，可修改 `GatewayConfig.ps1` 中的：
+`GatewayConfig.ps1` 包含少量管理员级配置：
 
 ```powershell
-DefaultProxyHost = '127.0.0.1'
-DefaultProxyPort = 10808
+AppPreference        = 'PreferBeta'
+DefaultProxyHost     = '127.0.0.1'
+DefaultProxyPort     = 10808
+LaunchTimeoutSeconds = 15
 ```
 
-### Beta / Stable 都没安装怎么办？
+一般用户不需要编辑该文件。应用列表和默认应用请通过设置界面管理。
 
-安装 `OpenAI.CodexBeta` 或 `OpenAI.Codex` Windows App。Gateway 不会下载、修复或替换应用包；选择策略不允许的包也不会被启动。
+## 安装启动器
 
-### Manifest 解析失败怎么办？
+桌面快捷方式：
 
-Gateway 会在日志中记录 Manifest 错误并检查对应 Variant 的已知路径。如果 fallback 文件也不存在，会显示包名、安装目录、Manifest 候选和最终检查的路径，然后退出。
+```bat
+Install-Launcher.bat
+```
 
-### `--check` 的 OpenAI HTTPS 失败怎么办？
+开始菜单快捷方式：
 
-先确认 `[1/3]` SOCKS5 handshake 已成功，再检查 v2rayN 当前节点、路由规则、DNS 和 TLS 拦截设置。日志中会保留目标 URL、endpoint 和具体异常。
+```bat
+Install-Launcher.bat --start-menu
+```
 
-## 卸载启动器
+快捷方式名仍为 **Codex Gateway - v2rayN**，目标始终是当前目录中的 `Codex-v2rayN.bat`，不会绑定某个具体应用或 executable。
 
 卸载桌面快捷方式：
 
@@ -192,21 +208,75 @@ Install-Launcher.bat --uninstall
 Install-Launcher.bat --start-menu --uninstall
 ```
 
-这只删除对应的 `.lnk`，不会删除项目文件、日志、v2rayN 或 ChatGPT / Codex。
+卸载快捷方式不会删除应用配置、日志、项目、v2rayN 或任何目标应用。
+
+## 文件结构
+
+| 文件 | 职责 |
+|---|---|
+| `Codex-v2rayN.bat` | 薄入口：处理 `--check`、`--settings` 并调用 PowerShell。 |
+| `Launch-CodexApp.ps1` | 快捷键入口、设置 UI、三阶段检查、启动与日志。 |
+| `AppProfileSupport.ps1` | 用户应用配置、路径解析、自定义进程识别和参数占位符。 |
+| `LocalizationSupport.ps1` | 语言检测、UTF-8 locale 加载和文本格式化。 |
+| `locales\zh-CN.json` | 简体中文界面资源。 |
+| `locales\en-US.json` | English 界面资源。 |
+| `AppSupport.ps1` | Codex AppX、Manifest 和 WindowsApps 进程识别。 |
+| `GatewayConfig.ps1` | endpoint、超时和 Codex 策略。 |
+| `Resolve-v2rayNProxy.ps1` | 自动解析 v2rayN endpoint。 |
+| `ProxySupport.ps1` | SOCKS5、mixed 和 TLS 检查。 |
+| `Install-Launcher.bat/.ps1` | 安装与卸载快捷方式。 |
+| `VERSION` | Gateway 版本。 |
+| `assets\` | 图标资源。 |
+| `tests\` | PowerShell 回归测试。 |
+
+## 日志
+
+```text
+logs\gateway-YYYY-MM-DD.log
+```
+
+日志记录版本、模式、默认应用名称和类型、endpoint、最终 executable、启动结果和错误信息。不会记录完整环境变量、应用参数内容、token、API key、cookie 或密码。
+
+## 常见问题
+
+### v2rayN 未启动或端口改变
+
+先启动 v2rayN 并确认 core 正常。Gateway 会自动读取运行配置；无法定位配置时使用 `GatewayConfig.ps1` 中的 fallback。错误会显示实际 endpoint 和检测来源。
+
+### 应用已经运行
+
+完全关闭该应用的现有实例再重试。已运行的进程无法继承本次 Gateway 环境，所以不会被直接复用。
+
+### 自定义应用启动了但没有使用代理
+
+确认目标应用是否支持 `ALL_PROXY`、`HTTP_PROXY` 或 `HTTPS_PROXY`。如果它要求自己的代理参数，请在设置中加入 `{socks_proxy}` 或 `{http_proxy}` 占位符。部分应用可能完全忽略环境变量和命令行代理选项。
+
+### 自定义 EXE 被移动或卸载
+
+启动时会显示不存在的实际路径。按 `S` 进入设置，使用 `E` 更新路径，或使用 `D` 删除该应用。
+
+### 用户应用配置损坏
+
+配置错误会显示 `%LOCALAPPDATA%\CodexGateway\apps.json` 的具体原因。可以恢复同目录的 `apps.json.bak`；也可以删除损坏的 JSON，让 Gateway 回到默认 Codex Profile。
+
+### Beta 和 Stable 都未安装
+
+内建 Codex Profile 会返回 AppX 错误。可以安装 `OpenAI.CodexBeta`/`OpenAI.Codex`，或者按 `S` 添加其他 EXE 并设为默认应用。
 
 ## Exit code
 
 | Code | 含义 |
 |---:|---|
-| `0` | 启动或检查成功。 |
-| `1` | endpoint 解析或 SOCKS5 handshake 失败。 |
-| `2` | AppX 包不可用。 |
-| `3` | executable 不存在或无法解析。 |
-| `4` | 已有实例，或无法安全完成进程检查。 |
+| `0` | 启动、检查或设置退出成功。 |
+| `1` | endpoint 或 SOCKS5 handshake 失败。 |
+| `2` | Codex AppX 包不可用。 |
+| `3` | executable 或工作目录不可用。 |
+| `4` | 应用已经运行，或无法安全检查进程。 |
 | `5` | `Start-Process` 失败。 |
 | `6` | 启动后未观察到目标进程。 |
-| `7` | `--check` 的 OpenAI HTTPS 失败。 |
-| `8` | 日志目录或文件不可写。 |
-| `9` | 配置无效。 |
+| `7` | HTTPS 健康检查失败。 |
+| `8` | 日志不可写。 |
+| `9` | Gateway 管理配置无效。 |
 | `10` | 未预期错误。 |
+| `11` | 用户应用 JSON 配置无效。 |
 | `64` | BAT 参数错误。 |
