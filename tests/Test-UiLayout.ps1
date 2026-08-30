@@ -65,6 +65,7 @@ try {
     if ($script:UiFrame.Count -ne 1) { throw 'Responsive redraw duplicated retained UI records.' }
 
     Write-Host 'All centered terminal UI tests passed.' -ForegroundColor Green
+    $global:LASTEXITCODE = 0
 } finally {
     if (Test-Path -LiteralPath $tempRoot) {
         Remove-Item -LiteralPath $tempRoot -Recurse -Force
