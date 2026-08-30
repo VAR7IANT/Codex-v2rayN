@@ -1,8 +1,10 @@
 # Codex Gateway - v2rayN
 
-当前项目版本：**v1.1.0**。根目录中的 `VERSION` 是 Gateway 运行时读取的版本来源。
+当前项目版本：**v1.2.0**。根目录中的 `VERSION` 是 Gateway 运行时读取的版本来源。
 
-这是一个仅使用 Windows 自带 CMD 与 Windows PowerShell 的轻量应用 Gateway。它为本次启动的应用进程设置 v2rayN 代理环境，不修改 Windows 系统代理，也不永久写入用户或系统环境变量。
+这是一个仅使用 Windows 自带 CMD 与 Windows PowerShell 的轻量应用 Gateway。它为本次启动的应用进程设置本地代理环境，不修改 Windows 系统代理，也不永久写入用户或系统环境变量。
+
+项目最初为 v2rayN 编写，因此保留了仓库名、BAT 文件名和启动器名称以兼容现有安装；Gateway 现在也支持 Clash、Mihomo、Clash Verge Rev 等提供本地 SOCKS5 或 mixed inbound 的客户端。
 
 默认应用仍然是 ChatGPT / Codex。现在也可以在设置中通过 `.exe` 路径添加其他 Windows 应用，并将其中任意一个设为默认应用。
 
@@ -28,6 +30,12 @@ Auto launch in 2 seconds...
 
 平时无需选择应用。Gateway 会记住默认应用，只有按 `S` 或主动运行 `--settings` 时才进入设置。
 
+## 终端界面
+
+Gateway 使用可重绘的自适应居中面板：宽窗口中保持紧凑的信息宽度，窄窗口中自动缩小。调整 Windows Terminal 的窗口宽度后，当前画面会按新宽度重新排版，而不是停留在输出时的位置。启动快捷键等待页和错误关闭页会即时响应缩放；检查或启动期间会在下一条状态更新时响应；设置输入期间也会持续检测缩放。标题、代理路由摘要和最终状态居中；步骤、路径与设置项在面板内部左对齐，便于快速扫描。中文全角字符会按双列宽度计算，因此中英文切换不会造成标题偏移或边框错位。
+
+界面只使用 Windows 终端自带颜色和 Unicode 线条，不包含动画，也不需要字体或其他第三方依赖。若旧版控制台无法显示 Unicode 线条，建议使用 Windows Terminal 或 Windows 11 默认终端。
+
 ## 设置模式
 
 可以在启动等待期间按 `S`，也可以直接运行：
@@ -44,6 +52,7 @@ Codex-v2rayN.bat --settings
 - 按 `D`，删除自定义应用。
 - 按 `L`，在简体中文与 English 之间切换界面语言。
 - 按 `T`，设置启动等待时长，单位为秒；允许 `0`–`60`，`0` 表示立即启动。
+- 按 `P`，在自动检测代理端口与手动指定端口之间切换。
 - 按 `Enter`，保存设置并启动当前默认应用。
 - 按 `Q`，保存设置并退出，不启动应用。
 
@@ -160,12 +169,21 @@ no_proxy=localhost,127.0.0.1,::1
 
 Gateway 按以下顺序查找本地 endpoint：
 
-1. 从运行中的 `v2rayN.exe`、`sing-box`、`xray` 或 `mihomo` 定位 v2rayN 根目录。
+1. 从运行中的 `v2rayN.exe`、`sing-box` 或 `xray` 定位 v2rayN 根目录。
 2. 检查 `binConfigs\config.json` runtime inbound。
 3. 检查 `guiConfigs\guiNConfig.json` GUI inbound。
-4. 使用 `GatewayConfig.ps1` 中的 fallback：`127.0.0.1:10808`。
+4. 检查 Mihomo/Clash YAML 或 JSON 中的顶层 `mixed-port` 与 `socks-port`。
+5. 识别 Clash、Mihomo、Clash Verge 相关进程；运行时探测少量常用端口 `7890`、`7891`、`7897`、`7898`。
+6. 检查当前 Gateway 进程继承到的 loopback `ALL_PROXY`、`HTTPS_PROXY` 或 `HTTP_PROXY`，仅接受通过 SOCKS5 握手的端口。
+7. 使用 `GatewayConfig.ps1` 中的 fallback：`127.0.0.1:10808`。
 
 候选地址只接受 loopback。Gateway 会执行真实 SOCKS5 handshake，并探测同一端口是否支持 HTTP CONNECT，以识别 mixed inbound。
+
+默认使用自动检测。设置界面按 `P` 后可以输入 `1`–`65535` 之间的端口，将 Gateway 固定到 `127.0.0.1:<端口>`；输入 `auto` 可恢复自动检测。手动模式不会在失败时偷偷回退到其他端口，因此报错中的地址就是实际检查的地址。
+
+自动检测并不是扫描全部 65535 个端口。Gateway 会读取客户端已经配置的 inbound，或在识别到相关进程后探测一小组常用端口，再逐个执行 SOCKS5 handshake。这种方式更快，也避免误连到无关的本地服务。
+
+Mihomo 官方配置中，`mixed-port` 同时支持 HTTP(S) 与 SOCKS5，`socks-port` 提供 SOCKS5。Gateway 当前要求目标端口至少支持 SOCKS5；只有 `port`（纯 HTTP）而没有 SOCKS/mixed inbound 的配置不会被选中。
 
 ## 可调整配置
 

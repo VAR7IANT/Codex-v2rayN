@@ -26,12 +26,7 @@ echo.
 exit /b 64
 
 :run
-"%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe" -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%~dp0Launch-CodexApp.ps1" -Mode "%GATEWAY_MODE%"
+"%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe" -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%~dp0Launch-CodexApp.ps1" -Mode "%GATEWAY_MODE%" -PauseOnError
 set "GATEWAY_EXIT=%ERRORLEVEL%"
-
-if not "%GATEWAY_EXIT%"=="0" (
-    echo Press any key to close this window.
-    pause >nul
-)
 
 exit /b %GATEWAY_EXIT%

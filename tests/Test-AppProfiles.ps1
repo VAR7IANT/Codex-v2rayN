@@ -21,6 +21,7 @@ try {
     Assert-Equal 'codex' $configuration.DefaultAppId 'New configuration has the wrong default.'
     if ($configuration.Language -notin @('zh-CN', 'en-US')) { throw 'New configuration has an unsupported language.' }
     Assert-Equal 2 $configuration.StartupDelaySeconds 'New configuration has the wrong startup delay.'
+    Assert-Equal $null $configuration.ProxyPortOverride 'New configuration should use automatic proxy detection.'
     Assert-Equal 0 @($configuration.Apps).Count 'New configuration contains custom apps.'
 
     $customApp = [pscustomobject]@{
@@ -33,11 +34,13 @@ try {
     $configuration.Apps = @($customApp)
     $configuration.DefaultAppId = $customApp.Id
     $configuration.StartupDelaySeconds = 7
+    $configuration.ProxyPortOverride = 10809
     Save-GatewayUserConfiguration -Configuration $configuration -Path $configPath
 
     $loaded = Read-GatewayUserConfiguration -Path $configPath
     Assert-Equal $configuration.Language $loaded.Language 'Language changed after JSON round-trip.'
     Assert-Equal 7 $loaded.StartupDelaySeconds 'Startup delay changed after JSON round-trip.'
+    Assert-Equal 10809 $loaded.ProxyPortOverride 'Proxy port override changed after JSON round-trip.'
     Assert-Equal $customApp.Id $loaded.DefaultAppId 'Default custom app was not preserved.'
     Assert-Equal 1 @($loaded.Apps).Count 'Custom app count changed after JSON round-trip.'
     Assert-Equal $customApp.Name $loaded.Apps[0].Name 'Unicode application name changed after JSON round-trip.'
@@ -64,6 +67,7 @@ try {
     [IO.File]::WriteAllText($legacyConfigPath, '{"SchemaVersion":1,"Language":"en-US","DefaultAppId":"codex","Apps":[]}', [Text.UTF8Encoding]::new($false))
     $legacyConfiguration = Read-GatewayUserConfiguration -Path $legacyConfigPath
     Assert-Equal 2 $legacyConfiguration.StartupDelaySeconds 'Legacy configuration did not receive the default startup delay.'
+    Assert-Equal $null $legacyConfiguration.ProxyPortOverride 'Legacy configuration did not use automatic proxy detection.'
 
     $invalidDelayPath = Join-Path $tempRoot 'invalid-delay.json'
     [IO.File]::WriteAllText($invalidDelayPath, '{"SchemaVersion":1,"Language":"en-US","StartupDelaySeconds":61,"DefaultAppId":"codex","Apps":[]}', [Text.UTF8Encoding]::new($false))
@@ -72,6 +76,15 @@ try {
         throw 'Invalid StartupDelaySeconds was accepted.'
     } catch {
         if ($_.Exception.Message -notmatch 'StartupDelaySeconds') { throw }
+    }
+
+    $invalidPortPath = Join-Path $tempRoot 'invalid-port.json'
+    [IO.File]::WriteAllText($invalidPortPath, '{"SchemaVersion":1,"Language":"en-US","StartupDelaySeconds":2,"ProxyPortOverride":0,"DefaultAppId":"codex","Apps":[]}', [Text.UTF8Encoding]::new($false))
+    try {
+        Read-GatewayUserConfiguration -Path $invalidPortPath | Out-Null
+        throw 'Invalid ProxyPortOverride was accepted.'
+    } catch {
+        if ($_.Exception.Message -notmatch 'ProxyPortOverride') { throw }
     }
 
     function Get-CimInstance {

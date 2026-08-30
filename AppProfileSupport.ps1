@@ -30,6 +30,27 @@ function ConvertTo-GatewayStartupDelaySeconds {
     return $seconds
 }
 
+function ConvertTo-GatewayProxyPortOverride {
+    param(
+        [AllowNull()][object]$Value,
+        [switch]$AllowAuto
+    )
+
+    $text = [string]$Value
+    if ([string]::IsNullOrWhiteSpace($text) -or $text.Trim() -ieq 'auto') {
+        if ($AllowAuto) {
+            return $null
+        }
+        throw 'Proxy port must not be empty.'
+    }
+
+    $port = 0
+    if (-not [int]::TryParse($text, [ref]$port) -or $port -lt 1 -or $port -gt 65535) {
+        throw 'Proxy port must be a whole number from 1 to 65535, or auto.'
+    }
+    return $port
+}
+
 function New-GatewayUserConfiguration {
     $language = if ([Globalization.CultureInfo]::CurrentUICulture.Name -match '^(?i)zh') { 'zh-CN' } else { 'en-US' }
     $delayPolicy = Get-GatewayStartupDelayPolicy
@@ -37,6 +58,7 @@ function New-GatewayUserConfiguration {
         SchemaVersion = 1
         Language = $language
         StartupDelaySeconds = [int]$delayPolicy.DefaultSeconds
+        ProxyPortOverride = $null
         DefaultAppId = 'codex'
         Apps = @()
     }
@@ -108,6 +130,16 @@ function Read-GatewayUserConfiguration {
         throw "Invalid StartupDelaySeconds in ${Path}: $($_.Exception.Message)"
     }
 
+    $proxyPortValue = $null
+    if ($stored.PSObject.Properties.Name -contains 'ProxyPortOverride') {
+        $proxyPortValue = $stored.ProxyPortOverride
+    }
+    try {
+        $proxyPortOverride = ConvertTo-GatewayProxyPortOverride -Value $proxyPortValue -AllowAuto
+    } catch {
+        throw "Invalid ProxyPortOverride in ${Path}: $($_.Exception.Message)"
+    }
+
     $defaultAppId = [string]$stored.DefaultAppId
     if ([string]::IsNullOrWhiteSpace($defaultAppId)) {
         $defaultAppId = 'codex'
@@ -120,6 +152,7 @@ function Read-GatewayUserConfiguration {
         SchemaVersion = 1
         Language = $language
         StartupDelaySeconds = $startupDelaySeconds
+        ProxyPortOverride = $proxyPortOverride
         DefaultAppId = $defaultAppId
         Apps = @($apps)
     }
@@ -141,10 +174,12 @@ function Save-GatewayUserConfiguration {
     }
 
     $startupDelaySeconds = ConvertTo-GatewayStartupDelaySeconds -Value $Configuration.StartupDelaySeconds -UseDefaultWhenEmpty
+    $proxyPortOverride = ConvertTo-GatewayProxyPortOverride -Value $Configuration.ProxyPortOverride -AllowAuto
     $serializable = [ordered]@{
         SchemaVersion = 1
         Language = [string]$Configuration.Language
         StartupDelaySeconds = $startupDelaySeconds
+        ProxyPortOverride = $proxyPortOverride
         DefaultAppId = [string]$Configuration.DefaultAppId
         Apps = @($Configuration.Apps | ForEach-Object {
             [ordered]@{

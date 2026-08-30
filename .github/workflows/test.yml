@@ -38,3 +38,6 @@ jobs:
       - name: Test localization resources
         shell: powershell
         run: .\tests\Test-Localization.ps1
+      - name: Test centered terminal UI
+        shell: powershell
+        run: .\tests\Test-UiLayout.ps1

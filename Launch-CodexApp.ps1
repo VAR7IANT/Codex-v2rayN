@@ -2,10 +2,14 @@
 param(
     [ValidateSet('Launch', 'Check', 'Settings')]
     [string]$Mode = 'Launch',
-    [string]$UserAppsPath
+    [string]$UserAppsPath,
+    [switch]$PauseOnError
 )
 
 $ErrorActionPreference = 'Stop'
+$script:UiFrame = [Collections.Generic.List[object]]::new()
+$script:UiLastConsoleWidth = 0
+$script:UiIsRendering = $false
 
 $ExitCode = @{
     Success = 0
@@ -33,6 +37,276 @@ function T {
     return $Key
 }
 
+function Get-UiConsoleWidth {
+    try {
+        $width = [Console]::WindowWidth
+        if ($width -ge 20) { return $width }
+    } catch {}
+    return 80
+}
+
+function Test-UiInteractive {
+    try {
+        return [Environment]::UserInteractive -and -not [Console]::IsInputRedirected -and [Console]::WindowWidth -ge 20
+    } catch {
+        return $false
+    }
+}
+
+function Get-UiPanelWidth {
+    $consoleWidth = Get-UiConsoleWidth
+    return [Math]::Max(20, [Math]::Min(76, $consoleWidth - 4))
+}
+
+function Get-UiMargin {
+    $marginWidth = [Math]::Max(0, [Math]::Floor(((Get-UiConsoleWidth) - (Get-UiPanelWidth)) / 2))
+    return (' ' * $marginWidth)
+}
+
+function Get-UiDisplayWidth {
+    param([AllowEmptyString()][string]$Text)
+
+    $width = 0
+    foreach ($character in $Text.ToCharArray()) {
+        $code = [int]$character
+        $isWide = ($code -ge 0x1100 -and $code -le 0x115F) -or
+            ($code -ge 0x2E80 -and $code -le 0xA4CF) -or
+            ($code -ge 0xAC00 -and $code -le 0xD7A3) -or
+            ($code -ge 0xF900 -and $code -le 0xFAFF) -or
+            ($code -ge 0xFE10 -and $code -le 0xFE6F) -or
+            ($code -ge 0xFF01 -and $code -le 0xFF60) -or
+            ($code -ge 0xFFE0 -and $code -le 0xFFE6)
+        $width += if ($isWide) { 2 } else { 1 }
+    }
+    return $width
+}
+
+function Split-UiText {
+    param(
+        [AllowEmptyString()][string]$Text,
+        [ValidateRange(4, 500)][int]$MaxWidth
+    )
+
+    $result = [Collections.Generic.List[string]]::new()
+    foreach ($sourceLine in @($Text -split '\r?\n')) {
+        $remaining = [string]$sourceLine
+        if ($remaining.Length -eq 0) {
+            $result.Add('')
+            continue
+        }
+
+        while ((Get-UiDisplayWidth $remaining) -gt $MaxWidth) {
+            $usedWidth = 0
+            $fitCount = 0
+            $lastWhitespace = -1
+            for ($index = 0; $index -lt $remaining.Length; $index++) {
+                $character = [string]$remaining[$index]
+                $characterWidth = Get-UiDisplayWidth $character
+                if (($usedWidth + $characterWidth) -gt $MaxWidth) { break }
+                $usedWidth += $characterWidth
+                $fitCount = $index + 1
+                if ([char]::IsWhiteSpace($remaining[$index])) { $lastWhitespace = $index }
+            }
+
+            if ($fitCount -lt 1) { $fitCount = 1 }
+            $breakCount = if ($lastWhitespace -gt 0) { $lastWhitespace } else { $fitCount }
+            $line = $remaining.Substring(0, $breakCount).TrimEnd()
+            if ($line.Length -eq 0) { $line = $remaining.Substring(0, $fitCount) }
+            $result.Add($line)
+
+            $consumed = if ($lastWhitespace -gt 0) { $lastWhitespace + 1 } else { $fitCount }
+            while ($consumed -lt $remaining.Length -and [char]::IsWhiteSpace($remaining[$consumed])) { $consumed++ }
+            $remaining = $remaining.Substring($consumed)
+        }
+        $result.Add($remaining)
+    }
+    return $result.ToArray()
+}
+
+function Write-UiLineCore {
+    param(
+        [AllowEmptyString()][string]$Text = '',
+        [ConsoleColor]$Color = [ConsoleColor]::Gray,
+        [ValidateSet('Left', 'Center')][string]$Align = 'Left',
+        [ValidateRange(0, 8)][int]$Indent = 0
+    )
+
+    $panelWidth = Get-UiPanelWidth
+    $contentWidth = if ($Align -eq 'Center') { $panelWidth } else { [Math]::Max(4, $panelWidth - $Indent) }
+    foreach ($line in @(Split-UiText -Text $Text -MaxWidth $contentWidth)) {
+        $prefix = Get-UiMargin
+        if ($Align -eq 'Center') {
+            $padding = [Math]::Max(0, [Math]::Floor(($panelWidth - (Get-UiDisplayWidth $line)) / 2))
+            $prefix += (' ' * $padding)
+        } else {
+            $prefix += (' ' * $Indent)
+        }
+        Write-Host ($prefix + $line) -ForegroundColor $Color
+    }
+}
+
+function Write-UiRuleCore {
+    param(
+        [ConsoleColor]$Color = [ConsoleColor]::DarkCyan,
+        [char]$Character = [char]0x2500
+    )
+    Write-Host ((Get-UiMargin) + ([string]$Character * (Get-UiPanelWidth))) -ForegroundColor $Color
+}
+
+function Redraw-UiFrame {
+    if (-not (Test-UiInteractive) -or $script:UiIsRendering) { return }
+
+    $script:UiIsRendering = $true
+    try {
+        Clear-Host
+        foreach ($record in $script:UiFrame) {
+            switch ($record.Kind) {
+                'Line' {
+                    Write-UiLineCore -Text $record.Text -Color $record.Color -Align $record.Align -Indent $record.Indent
+                }
+                'Rule' {
+                    Write-UiRuleCore -Color $record.Color -Character $record.Character
+                }
+                'Blank' {
+                    Write-Host ''
+                }
+            }
+        }
+        $script:UiLastConsoleWidth = Get-UiConsoleWidth
+    } finally {
+        $script:UiIsRendering = $false
+    }
+}
+
+function Sync-UiLayout {
+    if (-not (Test-UiInteractive) -or $script:UiIsRendering) { return $false }
+
+    $currentWidth = Get-UiConsoleWidth
+    if ($script:UiLastConsoleWidth -eq 0) {
+        $script:UiLastConsoleWidth = $currentWidth
+        return $false
+    }
+    if ($currentWidth -eq $script:UiLastConsoleWidth) { return $false }
+
+    Redraw-UiFrame
+    return $true
+}
+
+function Start-UiFrame {
+    $script:UiFrame.Clear()
+    $script:UiLastConsoleWidth = Get-UiConsoleWidth
+    Clear-Host
+}
+
+function Write-UiLine {
+    param(
+        [AllowEmptyString()][string]$Text = '',
+        [ConsoleColor]$Color = [ConsoleColor]::Gray,
+        [ValidateSet('Left', 'Center')][string]$Align = 'Left',
+        [ValidateRange(0, 8)][int]$Indent = 0
+    )
+
+    [void](Sync-UiLayout)
+    $script:UiFrame.Add([pscustomobject]@{
+        Kind = 'Line'; Text = $Text; Color = $Color; Align = $Align; Indent = $Indent
+    })
+    Write-UiLineCore -Text $Text -Color $Color -Align $Align -Indent $Indent
+}
+
+function Write-UiRule {
+    param(
+        [ConsoleColor]$Color = [ConsoleColor]::DarkCyan,
+        [char]$Character = [char]0x2500
+    )
+
+    [void](Sync-UiLayout)
+    $script:UiFrame.Add([pscustomobject]@{
+        Kind = 'Rule'; Color = $Color; Character = $Character
+    })
+    Write-UiRuleCore -Color $Color -Character $Character
+}
+
+function Write-UiBlank {
+    [void](Sync-UiLayout)
+    $script:UiFrame.Add([pscustomobject]@{ Kind = 'Blank' })
+    Write-Host ''
+}
+
+function Write-UiBrand {
+    Write-UiBlank
+    Write-UiRule -Color DarkCyan -Character ([char]0x2550)
+    Write-UiLine -Text 'CODEX GATEWAY' -Color Cyan -Align Center
+    Write-UiLine -Text (T 'Subtitle') -Color DarkCyan -Align Center
+    Write-UiRule -Color DarkCyan
+}
+
+function Read-UiInput {
+    param([Parameter(Mandatory)][string]$Prompt)
+    Write-UiLine -Text $Prompt -Color Gray -Indent 2
+
+    if (-not (Test-UiInteractive)) {
+        return Read-Host ((Get-UiMargin) + '  >')
+    }
+
+    $inputText = ''
+    Write-UiLineCore -Text '> ' -Color White -Indent 2
+    while ($true) {
+        if (Sync-UiLayout) {
+            Write-UiLineCore -Text ("> $inputText") -Color White -Indent 2
+        }
+        if (-not [Console]::KeyAvailable) {
+            Start-Sleep -Milliseconds 50
+            continue
+        }
+
+        $key = [Console]::ReadKey($true)
+        if ($key.Key -eq [ConsoleKey]::Enter) {
+            $script:UiFrame.Add([pscustomobject]@{
+                Kind = 'Line'; Text = "> $inputText"; Color = [ConsoleColor]::White; Align = 'Left'; Indent = 2
+            })
+            return $inputText
+        }
+        if ($key.Key -eq [ConsoleKey]::Backspace) {
+            if ($inputText.Length -gt 0) { $inputText = $inputText.Substring(0, $inputText.Length - 1) }
+        } elseif ($key.Key -eq [ConsoleKey]::Escape) {
+            $inputText = ''
+        } elseif ($key.KeyChar -ne [char]0) {
+            $inputText += [string]$key.KeyChar
+        } else {
+            continue
+        }
+
+        Redraw-UiFrame
+        Write-UiLineCore -Text ("> $inputText") -Color White -Indent 2
+    }
+}
+
+function Wait-UiClose {
+    $message = 'Press any key to close this window.'
+    if ($script:GatewayText) {
+        $property = $script:GatewayText.PSObject.Properties['PressAnyKeyToClose']
+        if ($property -and -not [string]::IsNullOrWhiteSpace([string]$property.Value)) {
+            $message = [string]$property.Value
+        }
+    }
+
+    Write-UiBlank
+    Write-UiLine -Text $message -Color Cyan -Align Center
+    try {
+        if (-not [Console]::IsInputRedirected) {
+            while ($true) {
+                [void](Sync-UiLayout)
+                if ([Console]::KeyAvailable) {
+                    [void][Console]::ReadKey($true)
+                    return
+                }
+                Start-Sleep -Milliseconds 50
+            }
+        }
+    } catch {}
+    [void](Read-Host)
+}
+
 function Write-GatewayLog {
     param(
         [Parameter(Mandatory)][string]$Level,
@@ -54,33 +328,32 @@ function Write-Header {
     $socksUrl = 'socks5://{0}:{1}' -f $Proxy.UriHost, $Proxy.Port
     $environmentLabel = if ($Proxy.Kind -eq 'mixed') { 'SOCKS + HTTP/HTTPS' } else { 'SOCKS only' }
 
-    Clear-Host
-    Write-Host ''
-    Write-Host '  CODEX GATEWAY' -ForegroundColor Cyan
-    Write-Host ('  {0}' -f (T 'Subtitle')) -ForegroundColor Cyan
-    Write-Host '  ------------------------------------------------------------------------' -ForegroundColor Cyan
-    Write-Host ''
-    Write-Host ('    {0}: {1}' -f (T 'GatewayVersion'), $GatewayVersion) -ForegroundColor Cyan
-    Write-Host ('    {0}: {1}' -f (T 'DefaultApp'), $ApplicationName) -ForegroundColor Cyan
-    Write-Host ('    {0}: {1}' -f (T 'Endpoint'), $socksUrl) -ForegroundColor Cyan
-    Write-Host ('    {0}: {1}' -f (T 'InboundType'), $Proxy.Kind) -ForegroundColor Cyan
-    Write-Host ('    {0}: {1}' -f (T 'DetectedFrom'), $Proxy.Source) -ForegroundColor Cyan
-    Write-Host ('    {0}: {1}' -f (T 'Environment'), $environmentLabel) -ForegroundColor Cyan
-    Write-Host ('    {0}: {1}' -f (T 'SessionScope'), (T 'CurrentLaunchOnly')) -ForegroundColor Cyan
-    Write-Host ('    {0}: {1}' -f (T 'WindowsProxy'), (T 'Unchanged')) -ForegroundColor Cyan
-    Write-Host ''
-    Write-Host '  ------------------------------------------------------------------------' -ForegroundColor Cyan
-    Write-Host ''
+    Start-UiFrame
+    Write-UiBrand
+    Write-UiBlank
+    Write-UiLine -Text (('{0}  {1}  {2}' -f $socksUrl, $Proxy.Kind.ToUpperInvariant(), (T 'CurrentLaunchOnly'))) -Color White -Align Center
+    Write-UiBlank
+    Write-UiLine -Text ('{0}: {1}' -f (T 'GatewayVersion'), $GatewayVersion) -Color DarkGray -Indent 2
+    Write-UiLine -Text ('{0}: {1}' -f (T 'DefaultApp'), $ApplicationName) -Color Gray -Indent 2
+    Write-UiLine -Text ('{0}: {1}' -f (T 'Endpoint'), $socksUrl) -Color Gray -Indent 2
+    Write-UiLine -Text ('{0}: {1}' -f (T 'InboundType'), $Proxy.Kind) -Color Gray -Indent 2
+    Write-UiLine -Text ('{0}: {1}' -f (T 'DetectedFrom'), $Proxy.Source) -Color Gray -Indent 2
+    Write-UiLine -Text ('{0}: {1}' -f (T 'Environment'), $environmentLabel) -Color Gray -Indent 2
+    Write-UiLine -Text ('{0}: {1}' -f (T 'SessionScope'), (T 'CurrentLaunchOnly')) -Color Gray -Indent 2
+    Write-UiLine -Text ('{0}: {1}' -f (T 'WindowsProxy'), (T 'Unchanged')) -Color Gray -Indent 2
+    Write-UiBlank
+    Write-UiRule -Color DarkCyan
+    Write-UiBlank
 }
 
 function Write-Step {
     param([string]$Number, [string]$Message)
-    Write-Host ("  [{0}] {1}..." -f $Number, $Message) -ForegroundColor Cyan
+    Write-UiLine -Text ("[{0}]  {1}..." -f $Number, $Message) -Color Cyan
 }
 
 function Write-Success {
     param([string]$Message)
-    Write-Host ("       [OK] {0}" -f $Message) -ForegroundColor Green
+    Write-UiLine -Text ("[OK]  {0}" -f $Message) -Color Green -Indent 7
 }
 
 function Write-Failure {
@@ -89,19 +362,19 @@ function Write-Failure {
         [string[]]$Detail = @()
     )
 
-    Write-Host ('       {0}' -f (T 'Failed')) -ForegroundColor Red
-    Write-Host ''
-    Write-Host '  ------------------------------------------------------------------------' -ForegroundColor Red
-    Write-Host ('  {0}' -f (T 'GatewayStopped')) -ForegroundColor Red
-    Write-Host '  ------------------------------------------------------------------------' -ForegroundColor Red
-    Write-Host ''
-    Write-Host ("    {0}" -f $Reason) -ForegroundColor Red
+    Write-UiLine -Text (T 'Failed') -Color Red -Indent 7
+    Write-UiBlank
+    Write-UiRule -Color Red
+    Write-UiLine -Text (T 'GatewayStopped') -Color Red -Align Center
+    Write-UiRule -Color Red
+    Write-UiBlank
+    Write-UiLine -Text $Reason -Color Red -Indent 2
     foreach ($line in $Detail) {
         if (-not [string]::IsNullOrWhiteSpace($line)) {
-            Write-Host ("    {0}" -f $line) -ForegroundColor Cyan
+            Write-UiLine -Text $line -Color Gray -Indent 2
         }
     }
-    Write-Host ''
+    Write-UiBlank
 }
 
 function Wait-ForStartupAction {
@@ -110,15 +383,15 @@ function Wait-ForStartupAction {
         [ValidateRange(0, 60)][int]$DelaySeconds = 2
     )
 
-    Clear-Host
-    Write-Host ''
-    Write-Host '  CODEX GATEWAY' -ForegroundColor Cyan
-    Write-Host ('  {0}' -f (T 'Subtitle')) -ForegroundColor Cyan
-    Write-Host ''
-    Write-Host ('  {0}' -f (T 'DefaultApplication' @($DefaultApplicationName))) -ForegroundColor Cyan
-    Write-Host ''
-    Write-Host ('  {0}' -f (T 'StartupKeys')) -ForegroundColor Cyan
-    Write-Host ('  {0}' -f (T 'AutoLaunch' @($DelaySeconds))) -ForegroundColor Cyan
+    Start-UiFrame
+    Write-UiBrand
+    Write-UiBlank
+    Write-UiLine -Text (T 'DefaultApplication' @($DefaultApplicationName)) -Color White -Align Center
+    Write-UiBlank
+    Write-UiLine -Text (T 'StartupKeys') -Color Cyan -Align Center
+    Write-UiLine -Text (T 'AutoLaunch' @($DelaySeconds)) -Color Yellow -Align Center
+    Write-UiBlank
+    Write-UiRule -Color DarkCyan
 
     if ($DelaySeconds -eq 0) {
         return 'Launch'
@@ -130,6 +403,7 @@ function Wait-ForStartupAction {
         }
         $deadline = [DateTime]::UtcNow.AddSeconds($DelaySeconds)
         while ([DateTime]::UtcNow -lt $deadline) {
+            [void](Sync-UiLayout)
             if ([Console]::KeyAvailable) {
                 $key = [Console]::ReadKey($true)
                 if ($key.Key -eq [ConsoleKey]::S) {
@@ -149,7 +423,7 @@ function Wait-ForStartupAction {
 }
 
 function Pause-SettingsScreen {
-    [void](Read-Host (T 'PressEnter'))
+    [void](Read-UiInput (T 'PressEnter'))
 }
 
 function Add-GatewayCustomApplication {
@@ -158,21 +432,21 @@ function Add-GatewayCustomApplication {
         [Parameter(Mandatory)][string]$ConfigurationPath
     )
 
-    Write-Host ''
-    Write-Host (T 'AddTitle') -ForegroundColor Cyan
-    Write-Host (T 'AddHint') -ForegroundColor Cyan
-    $pathInput = Read-Host (T 'ExecutableBlankCancels')
+    Write-UiBlank
+    Write-UiLine -Text (T 'AddTitle') -Color White -Indent 2
+    Write-UiLine -Text (T 'AddHint') -Color DarkGray -Indent 2
+    $pathInput = Read-UiInput (T 'ExecutableBlankCancels')
     if ([string]::IsNullOrWhiteSpace($pathInput)) {
         return $Configuration
     }
     $executablePath = ConvertTo-CustomExecutablePath -InputPath $pathInput
     $suggestedName = [IO.Path]::GetFileNameWithoutExtension($executablePath)
-    $name = Read-Host (T 'DisplayNamePrompt' @($suggestedName))
+    $name = Read-UiInput (T 'DisplayNamePrompt' @($suggestedName))
     if ([string]::IsNullOrWhiteSpace($name)) {
         $name = $suggestedName
     }
-    $arguments = Read-Host (T 'ArgumentsOptional')
-    $workingDirectory = Read-Host (T 'WorkingDirectoryDefault' @((Split-Path -Parent $executablePath)))
+    $arguments = Read-UiInput (T 'ArgumentsOptional')
+    $workingDirectory = Read-UiInput (T 'WorkingDirectoryDefault' @((Split-Path -Parent $executablePath)))
 
     $newApp = [pscustomobject]@{
         Id = 'custom-' + [guid]::NewGuid().ToString('N').Substring(0, 12)
@@ -183,12 +457,12 @@ function Add-GatewayCustomApplication {
     }
     $Configuration.Apps = @($Configuration.Apps) + @($newApp)
 
-    $makeDefault = Read-Host (T 'SetDefaultPrompt')
+    $makeDefault = Read-UiInput (T 'SetDefaultPrompt')
     if ([string]::IsNullOrWhiteSpace($makeDefault) -or $makeDefault -match '^(?i)y(es)?$') {
         $Configuration.DefaultAppId = $newApp.Id
     }
     Save-GatewayUserConfiguration -Configuration $Configuration -Path $ConfigurationPath
-    Write-Host (T 'AddedApplication' @($newApp.Name)) -ForegroundColor Green
+    Write-UiLine -Text (T 'AddedApplication' @($newApp.Name)) -Color Green -Indent 2
     Pause-SettingsScreen
     return $Configuration
 }
@@ -201,21 +475,21 @@ function Select-CustomApplicationIndex {
 
     $customApps = @($Configuration.Apps)
     if ($customApps.Count -eq 0) {
-        Write-Host (T 'NoCustomApps') -ForegroundColor Red
+        Write-UiLine -Text (T 'NoCustomApps') -Color Red -Indent 2
         Pause-SettingsScreen
         return -1
     }
-    Write-Host ''
+    Write-UiBlank
     for ($index = 0; $index -lt $customApps.Count; $index++) {
-        Write-Host ("  [{0}] {1}" -f ($index + 1), $customApps[$index].Name) -ForegroundColor Cyan
+        Write-UiLine -Text ("[{0}] {1}" -f ($index + 1), $customApps[$index].Name) -Color Cyan -Indent 2
     }
-    $selection = Read-Host (T 'ApplicationNumber' @($ActionName))
+    $selection = Read-UiInput (T 'ApplicationNumber' @($ActionName))
     if ([string]::IsNullOrWhiteSpace($selection)) {
         return -1
     }
     $number = 0
     if (-not [int]::TryParse($selection, [ref]$number) -or $number -lt 1 -or $number -gt $customApps.Count) {
-        Write-Host (T 'InvalidApplicationNumber') -ForegroundColor Red
+        Write-UiLine -Text (T 'InvalidApplicationNumber') -Color Red -Indent 2
         Pause-SettingsScreen
         return -1
     }
@@ -232,22 +506,22 @@ function Edit-GatewayCustomApplication {
     if ($index -lt 0) { return $Configuration }
     $app = @($Configuration.Apps)[$index]
 
-    Write-Host ''
-    $name = Read-Host (T 'DisplayNamePrompt' @($app.Name))
+    Write-UiBlank
+    $name = Read-UiInput (T 'DisplayNamePrompt' @($app.Name))
     if (-not [string]::IsNullOrWhiteSpace($name)) {
         $app.Name = $name.Trim()
     }
-    $pathInput = Read-Host ("{0} [{1}]" -f (T 'ExecutableLabel'), $app.ExecutablePath)
+    $pathInput = Read-UiInput ("{0} [{1}]" -f (T 'ExecutableLabel'), $app.ExecutablePath)
     if (-not [string]::IsNullOrWhiteSpace($pathInput)) {
         $app.ExecutablePath = ConvertTo-CustomExecutablePath -InputPath $pathInput
     }
-    $arguments = Read-Host (T 'ArgumentsEdit')
+    $arguments = Read-UiInput (T 'ArgumentsEdit')
     if ($arguments -eq '-') {
         $app.Arguments = ''
     } elseif (-not [string]::IsNullOrWhiteSpace($arguments)) {
         $app.Arguments = $arguments
     }
-    $workingDirectory = Read-Host (T 'WorkingDirectoryEdit')
+    $workingDirectory = Read-UiInput (T 'WorkingDirectoryEdit')
     if ($workingDirectory -eq '-') {
         $app.WorkingDirectory = ''
     } elseif (-not [string]::IsNullOrWhiteSpace($workingDirectory)) {
@@ -259,7 +533,7 @@ function Edit-GatewayCustomApplication {
 
     $Configuration.Apps[$index] = $app
     Save-GatewayUserConfiguration -Configuration $Configuration -Path $ConfigurationPath
-    Write-Host (T 'UpdatedApplication' @($app.Name)) -ForegroundColor Green
+    Write-UiLine -Text (T 'UpdatedApplication' @($app.Name)) -Color Green -Indent 2
     Pause-SettingsScreen
     return $Configuration
 }
@@ -274,7 +548,7 @@ function Remove-GatewayCustomApplication {
     if ($index -lt 0) { return $Configuration }
     $customApps = @($Configuration.Apps)
     $app = $customApps[$index]
-    $confirmation = Read-Host (T 'RemoveConfirmation' @($app.Name))
+    $confirmation = Read-UiInput (T 'RemoveConfirmation' @($app.Name))
     if ($confirmation -notmatch '^(?i)y(es)?$') {
         return $Configuration
     }
@@ -284,7 +558,7 @@ function Remove-GatewayCustomApplication {
         $Configuration.DefaultAppId = 'codex'
     }
     Save-GatewayUserConfiguration -Configuration $Configuration -Path $ConfigurationPath
-    Write-Host (T 'RemovedApplication' @($app.Name)) -ForegroundColor Green
+    Write-UiLine -Text (T 'RemovedApplication' @($app.Name)) -Color Green -Indent 2
     Pause-SettingsScreen
     return $Configuration
 }
@@ -296,11 +570,11 @@ function Set-GatewayInterfaceLanguage {
         [Parameter(Mandatory)][string]$LocalesDirectory
     )
 
-    Write-Host ''
-    Write-Host (T 'ChooseLanguage') -ForegroundColor Cyan
-    Write-Host ('  {0}' -f (T 'ChineseLanguage')) -ForegroundColor Cyan
-    Write-Host ('  {0}' -f (T 'EnglishLanguage')) -ForegroundColor Cyan
-    $selection = Read-Host (T 'LanguageSelection')
+    Write-UiBlank
+    Write-UiLine -Text (T 'ChooseLanguage') -Color White -Indent 2
+    Write-UiLine -Text (T 'ChineseLanguage') -Color Cyan -Indent 2
+    Write-UiLine -Text (T 'EnglishLanguage') -Color Cyan -Indent 2
+    $selection = Read-UiInput (T 'LanguageSelection')
     if ([string]::IsNullOrWhiteSpace($selection)) {
         return $Configuration
     }
@@ -310,7 +584,7 @@ function Set-GatewayInterfaceLanguage {
         default { $null }
     }
     if (-not $language) {
-        Write-Host (T 'UnknownSelection') -ForegroundColor Red
+        Write-UiLine -Text (T 'UnknownSelection') -Color Red -Indent 2
         Pause-SettingsScreen
         return $Configuration
     }
@@ -318,7 +592,7 @@ function Set-GatewayInterfaceLanguage {
     $Configuration.Language = $language
     Save-GatewayUserConfiguration -Configuration $Configuration -Path $ConfigurationPath
     $locale = Import-GatewayLanguage -Language $language -LocalesDirectory $LocalesDirectory
-    Write-Host (T 'LanguageChanged' @($locale.DisplayName)) -ForegroundColor Green
+    Write-UiLine -Text (T 'LanguageChanged' @($locale.DisplayName)) -Color Green -Indent 2
     Pause-SettingsScreen
     return $Configuration
 }
@@ -330,9 +604,9 @@ function Set-GatewayStartupDelay {
     )
 
     $policy = Get-GatewayStartupDelayPolicy
-    Write-Host ''
-    Write-Host (T 'StartupDelayTitle') -ForegroundColor Cyan
-    $selection = Read-Host (T 'StartupDelayPrompt' @(
+    Write-UiBlank
+    Write-UiLine -Text (T 'StartupDelayTitle') -Color White -Indent 2
+    $selection = Read-UiInput (T 'StartupDelayPrompt' @(
         $Configuration.StartupDelaySeconds,
         $policy.MinimumSeconds,
         $policy.MaximumSeconds
@@ -344,14 +618,48 @@ function Set-GatewayStartupDelay {
     try {
         $seconds = ConvertTo-GatewayStartupDelaySeconds -Value $selection
     } catch {
-        Write-Host (T 'StartupDelayInvalid' @($policy.MinimumSeconds, $policy.MaximumSeconds)) -ForegroundColor Red
+        Write-UiLine -Text (T 'StartupDelayInvalid' @($policy.MinimumSeconds, $policy.MaximumSeconds)) -Color Red -Indent 2
         Pause-SettingsScreen
         return $Configuration
     }
 
     $Configuration.StartupDelaySeconds = $seconds
     Save-GatewayUserConfiguration -Configuration $Configuration -Path $ConfigurationPath
-    Write-Host (T 'StartupDelayChanged' @($seconds)) -ForegroundColor Green
+    Write-UiLine -Text (T 'StartupDelayChanged' @($seconds)) -Color Green -Indent 2
+    Pause-SettingsScreen
+    return $Configuration
+}
+
+function Set-GatewayProxyPort {
+    param(
+        [Parameter(Mandatory)]$Configuration,
+        [Parameter(Mandatory)][string]$ConfigurationPath
+    )
+
+    $currentValue = if ($null -eq $Configuration.ProxyPortOverride) { T 'ProxyPortAuto' } else { [string]$Configuration.ProxyPortOverride }
+    Write-UiBlank
+    Write-UiLine -Text (T 'ProxyPortTitle') -Color White -Indent 2
+    Write-UiLine -Text (T 'ProxyPortAutoHint') -Color DarkGray -Indent 2
+    $selection = Read-UiInput (T 'ProxyPortPrompt' @($currentValue))
+    if ([string]::IsNullOrWhiteSpace($selection)) {
+        return $Configuration
+    }
+
+    try {
+        $port = ConvertTo-GatewayProxyPortOverride -Value $selection -AllowAuto
+    } catch {
+        Write-UiLine -Text (T 'ProxyPortInvalid') -Color Red -Indent 2
+        Pause-SettingsScreen
+        return $Configuration
+    }
+
+    $Configuration.ProxyPortOverride = $port
+    Save-GatewayUserConfiguration -Configuration $Configuration -Path $ConfigurationPath
+    if ($null -eq $port) {
+        Write-UiLine -Text (T 'ProxyPortAutoChanged') -Color Green -Indent 2
+    } else {
+        Write-UiLine -Text (T 'ProxyPortChanged' @($port)) -Color Green -Indent 2
+    }
     Pause-SettingsScreen
     return $Configuration
 }
@@ -364,28 +672,35 @@ function Show-GatewaySettings {
     )
 
     while ($true) {
-        Clear-Host
+        Start-UiFrame
         $profiles = @(Get-GatewayAppProfiles -Configuration $Configuration)
-        Write-Host ''
-        Write-Host ('  {0}' -f (T 'SettingsTitle')) -ForegroundColor Cyan
-        Write-Host ('  {0}' -f (T 'ConfigurationPath' @($ConfigurationPath))) -ForegroundColor Cyan
-        Write-Host ''
-        Write-Host ('  {0}' -f (T 'ApplicationsInstruction')) -ForegroundColor Cyan
+        Write-UiBrand
+        Write-UiBlank
+        Write-UiLine -Text (T 'SettingsTitle') -Color White -Align Center
+        Write-UiLine -Text (T 'ConfigurationPath' @($ConfigurationPath)) -Color DarkGray -Indent 2
+        Write-UiBlank
+        Write-UiLine -Text (T 'ApplicationsInstruction') -Color Gray -Indent 2
         for ($index = 0; $index -lt $profiles.Count; $index++) {
             $defaultMarker = if ($profiles[$index].Id -eq $Configuration.DefaultAppId) { T 'DefaultMarker' } else { '' }
-            Write-Host ("    [{0}] {1}{2}" -f ($index + 1), $profiles[$index].Name, $defaultMarker) -ForegroundColor Cyan
+            $profileColor = if ($profiles[$index].Id -eq $Configuration.DefaultAppId) { 'Green' } else { 'Cyan' }
+            Write-UiLine -Text ("[{0}] {1}{2}" -f ($index + 1), $profiles[$index].Name, $defaultMarker) -Color $profileColor -Indent 4
         }
-        Write-Host ''
-        Write-Host ('    {0}' -f (T 'AddMenu')) -ForegroundColor Cyan
-        Write-Host ('    {0}' -f (T 'EditMenu')) -ForegroundColor Cyan
-        Write-Host ('    {0}' -f (T 'DeleteMenu')) -ForegroundColor Cyan
-        Write-Host ('    {0}' -f (T 'LanguageMenu')) -ForegroundColor Cyan
-        Write-Host ('    {0}' -f (T 'StartupDelayMenu' @($Configuration.StartupDelaySeconds))) -ForegroundColor Cyan
-        Write-Host ('    {0}' -f (T 'LaunchMenu')) -ForegroundColor Cyan
-        Write-Host ('    {0}' -f (T 'ExitMenu')) -ForegroundColor Cyan
-        Write-Host ''
+        Write-UiBlank
+        Write-UiRule -Color DarkCyan
+        Write-UiBlank
+        Write-UiLine -Text (T 'AddMenu') -Color Cyan -Indent 4
+        Write-UiLine -Text (T 'EditMenu') -Color Cyan -Indent 4
+        Write-UiLine -Text (T 'DeleteMenu') -Color Cyan -Indent 4
+        Write-UiLine -Text (T 'LanguageMenu') -Color Cyan -Indent 4
+        Write-UiLine -Text (T 'StartupDelayMenu' @($Configuration.StartupDelaySeconds)) -Color Cyan -Indent 4
+        $proxyPortDisplay = if ($null -eq $Configuration.ProxyPortOverride) { T 'ProxyPortAuto' } else { [string]$Configuration.ProxyPortOverride }
+        Write-UiLine -Text (T 'ProxyPortMenu' @($proxyPortDisplay)) -Color Cyan -Indent 4
+        Write-UiBlank
+        Write-UiLine -Text (T 'LaunchMenu') -Color White -Indent 4
+        Write-UiLine -Text (T 'ExitMenu') -Color DarkGray -Indent 4
+        Write-UiBlank
 
-        $choice = Read-Host (T 'Selection')
+        $choice = Read-UiInput (T 'Selection')
         if ([string]::IsNullOrWhiteSpace($choice)) {
             return [pscustomobject]@{ Action = 'Launch'; Configuration = $Configuration }
         }
@@ -405,14 +720,15 @@ function Show-GatewaySettings {
                 'D' { $Configuration = Remove-GatewayCustomApplication -Configuration $Configuration -ConfigurationPath $ConfigurationPath }
                 'L' { $Configuration = Set-GatewayInterfaceLanguage -Configuration $Configuration -ConfigurationPath $ConfigurationPath -LocalesDirectory $LocalesDirectory }
                 'T' { $Configuration = Set-GatewayStartupDelay -Configuration $Configuration -ConfigurationPath $ConfigurationPath }
+                'P' { $Configuration = Set-GatewayProxyPort -Configuration $Configuration -ConfigurationPath $ConfigurationPath }
                 'Q' { return [pscustomobject]@{ Action = 'Exit'; Configuration = $Configuration } }
                 default {
-                    Write-Host (T 'UnknownSelection') -ForegroundColor Red
+                    Write-UiLine -Text (T 'UnknownSelection') -Color Red -Indent 2
                     Pause-SettingsScreen
                 }
             }
         } catch {
-            Write-Host (T 'SettingsError' @($_.Exception.Message)) -ForegroundColor Red
+            Write-UiLine -Text (T 'SettingsError' @($_.Exception.Message)) -Color Red -Indent 2
             Pause-SettingsScreen
         }
     }
@@ -470,18 +786,18 @@ function Show-ResolvedApplication {
     param([Parameter(Mandatory)]$Application)
 
     Write-Success (T 'Selected' @($Application.DisplayName))
-    Write-Host ("       {0}: {1}" -f (T 'TypeLabel'), $Application.Type) -ForegroundColor Cyan
-    Write-Host ("       {0}: {1}" -f (T 'VariantLabel'), $Application.Variant) -ForegroundColor Cyan
-    Write-Host ("       {0}: {1}" -f (T 'VersionLabel'), $Application.Version) -ForegroundColor Cyan
+    Write-UiLine -Text ("{0}: {1}" -f (T 'TypeLabel'), $Application.Type) -Color Gray -Indent 7
+    Write-UiLine -Text ("{0}: {1}" -f (T 'VariantLabel'), $Application.Variant) -Color Gray -Indent 7
+    Write-UiLine -Text ("{0}: {1}" -f (T 'VersionLabel'), $Application.Version) -Color Gray -Indent 7
     if ($Application.PackageName -ne '-') {
-        Write-Host ("       {0}: {1}" -f (T 'PackageNameLabel'), $Application.PackageName) -ForegroundColor Cyan
+        Write-UiLine -Text ("{0}: {1}" -f (T 'PackageNameLabel'), $Application.PackageName) -Color Gray -Indent 7
     }
-    Write-Host ("       {0}: {1}" -f (T 'ExecutableLabel'), $Application.ExecutablePath) -ForegroundColor Cyan
-    Write-Host ("       {0}: {1}" -f (T 'ResolvedFromLabel'), $Application.ExecutableSource) -ForegroundColor Cyan
+    Write-UiLine -Text ("{0}: {1}" -f (T 'ExecutableLabel'), $Application.ExecutablePath) -Color Gray -Indent 7
+    Write-UiLine -Text ("{0}: {1}" -f (T 'ResolvedFromLabel'), $Application.ExecutableSource) -Color Gray -Indent 7
     if (-not [string]::IsNullOrWhiteSpace($Application.Arguments)) {
-        Write-Host ("       Arguments: {0}" -f (T 'ArgumentsConfigured')) -ForegroundColor Cyan
+        Write-UiLine -Text ("Arguments: {0}" -f (T 'ArgumentsConfigured')) -Color Gray -Indent 7
     }
-    Write-Host ''
+    Write-UiBlank
 }
 
 function Get-RunningSelectedApplication {
@@ -561,20 +877,31 @@ function Invoke-CodexGateway {
         $logsDirectory = Join-Path $PSScriptRoot 'logs'
         if (-not (Test-Path -LiteralPath $logsDirectory -PathType Container)) { [void](New-Item -ItemType Directory -Path $logsDirectory -Force) }
         $script:LogPath = Join-Path $logsDirectory ('gateway-{0}.log' -f (Get-Date -Format 'yyyy-MM-dd'))
-        Write-GatewayLog -Level Info -Message ("Gateway started. Version={0}; Mode={1}; DefaultApp={2}; AppType={3}; AppPreference={4}" -f $GatewayConfig.GatewayVersion, $Mode, $defaultProfile.Name, $defaultProfile.Type, $GatewayConfig.AppPreference)
+        $proxyPortMode = if ($null -eq $userConfiguration.ProxyPortOverride) { 'Auto' } else { "Manual:$($userConfiguration.ProxyPortOverride)" }
+        Write-GatewayLog -Level Info -Message ("Gateway started. Version={0}; Mode={1}; DefaultApp={2}; AppType={3}; AppPreference={4}; ProxyPortMode={5}" -f $GatewayConfig.GatewayVersion, $Mode, $defaultProfile.Name, $defaultProfile.Type, $GatewayConfig.AppPreference, $proxyPortMode)
     } catch {
         Write-Failure -Reason (T 'LogFailed') -Detail @("Log directory: $PSScriptRoot\logs", $_.Exception.Message)
         return $ExitCode.Logging
     }
 
     try {
-        $proxy = & (Join-Path $PSScriptRoot 'Resolve-v2rayNProxy.ps1') -DefaultHost $GatewayConfig.DefaultProxyHost -DefaultPort $GatewayConfig.DefaultProxyPort -OutputFormat Object
+        $resolverParameters = @{
+            DefaultHost = $GatewayConfig.DefaultProxyHost
+            DefaultPort = $GatewayConfig.DefaultProxyPort
+            OutputFormat = 'Object'
+        }
+        if ($null -ne $userConfiguration.ProxyPortOverride) {
+            $resolverParameters.OverridePort = [int]$userConfiguration.ProxyPortOverride
+        }
+        $proxy = & (Join-Path $PSScriptRoot 'Resolve-v2rayNProxy.ps1') @resolverParameters
         if (-not $proxy) { throw 'The proxy resolver returned no endpoint.' }
         Set-SessionProxyEnvironment -Proxy $proxy
         Write-GatewayLog -Level Info -Message ("Proxy endpoint={0}:{1}; Kind={2}; Source={3}" -f $proxy.Host, $proxy.Port, $proxy.Kind, $proxy.Source)
         foreach ($warning in @($proxy.Warnings)) { Write-GatewayLog -Level Warning -Message $warning }
     } catch {
-        Write-Failure -Reason (T 'ProxyResolveFailed') -Detail @("Fallback: $($GatewayConfig.DefaultProxyHost):$($GatewayConfig.DefaultProxyPort)", $_.Exception.Message)
+        $requestedPort = if ($null -eq $userConfiguration.ProxyPortOverride) { $GatewayConfig.DefaultProxyPort } else { $userConfiguration.ProxyPortOverride }
+        $requestedMode = if ($null -eq $userConfiguration.ProxyPortOverride) { T 'ProxyPortAuto' } else { T 'ProxyPortManual' }
+        Write-Failure -Reason (T 'ProxyResolveFailed') -Detail @("$requestedMode`: $($GatewayConfig.DefaultProxyHost):$requestedPort", $_.Exception.Message)
         Write-GatewayLog -Level Error -Message $_.Exception.Message
         return $ExitCode.ProxyEndpoint
     }
@@ -590,7 +917,7 @@ function Invoke-CodexGateway {
     }
     Write-Success (T 'SocksVerified' @($proxy.Host, $proxy.Port))
     Write-GatewayLog -Level Info -Message 'SOCKS5 handshake succeeded.'
-    Write-Host ''
+    Write-UiBlank
 
     Write-Step -Number '2/3' -Message (T 'ResolveApplication' @($defaultProfile.Name))
     try {
@@ -618,13 +945,13 @@ function Invoke-CodexGateway {
             Write-GatewayLog -Level Error -Message ("HTTPS health check failed. $($_.Exception.Message)")
             return $ExitCode.HttpsCheck
         }
-        Write-Host ''
-        Write-Host '  ------------------------------------------------------------------------' -ForegroundColor Green
-        Write-Host ('  {0}' -f (T 'CheckComplete')) -ForegroundColor Green
-        Write-Host ('  {0}' -f (T 'CheckPassed')) -ForegroundColor Green
-        Write-Host ('  {0}' -f (T 'NothingLaunched')) -ForegroundColor Green
-        Write-Host '  ------------------------------------------------------------------------' -ForegroundColor Green
-        Write-Host ''
+        Write-UiBlank
+        Write-UiRule -Color Green -Character ([char]0x2550)
+        Write-UiLine -Text (T 'CheckComplete') -Color Green -Align Center
+        Write-UiLine -Text (T 'CheckPassed') -Color Green -Align Center
+        Write-UiLine -Text (T 'NothingLaunched') -Color DarkGreen -Align Center
+        Write-UiRule -Color Green -Character ([char]0x2550)
+        Write-UiBlank
         Write-GatewayLog -Level Info -Message 'Check completed successfully; application was not launched.'
         return $ExitCode.Success
     }
@@ -683,24 +1010,30 @@ function Invoke-CodexGateway {
     }
 
     Write-Success (T 'ProcessVerified' @($application.DisplayName, $observed.ProcessId))
-    Write-Host ''
-    Write-Host '  ------------------------------------------------------------------------' -ForegroundColor Green
-    Write-Host ('  {0}' -f (T 'Ready')) -ForegroundColor Green
-    Write-Host ('  {0}' -f (T 'ReadyProxy')) -ForegroundColor Green
-    Write-Host ('  {0}' -f (T 'ReadyWindows')) -ForegroundColor Green
-    Write-Host '  ------------------------------------------------------------------------' -ForegroundColor Green
-    Write-Host ''
+    Write-UiBlank
+    Write-UiRule -Color Green -Character ([char]0x2550)
+    Write-UiLine -Text (T 'Ready') -Color Green -Align Center
+    Write-UiLine -Text (T 'ReadyProxy') -Color Green -Align Center
+    Write-UiLine -Text (T 'ReadyWindows') -Color DarkGreen -Align Center
+    Write-UiRule -Color Green -Character ([char]0x2550)
+    Write-UiBlank
     Write-GatewayLog -Level Info -Message ("Launch succeeded. App={0}; Type={1}; ObservedPID={2}" -f $application.DisplayName, $application.Type, $observed.ProcessId)
     return $ExitCode.Success
 }
 
+if ($MyInvocation.InvocationName -eq '.') {
+    return
+}
+
 try {
     $result = Invoke-CodexGateway
+    if ($result -ne $ExitCode.Success -and $PauseOnError) { Wait-UiClose }
     exit $result
 } catch {
     if ($script:LogPath) {
         try { Write-GatewayLog -Level Error -Message ("Unexpected error. $($_.Exception.Message)") } catch {}
     }
     Write-Failure -Reason (T 'UnexpectedError') -Detail @($_.Exception.Message)
+    if ($PauseOnError) { Wait-UiClose }
     exit $ExitCode.Unexpected
 }
