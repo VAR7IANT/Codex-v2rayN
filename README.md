@@ -1,156 +1,149 @@
 # Codex Gateway - v2rayN
 
-当前项目版本：**v1.2.0**。根目录中的 `VERSION` 是 Gateway 运行时读取的版本来源。
+**Current version: v1.2.0.** The root `VERSION` file is the version source read at runtime.
 
-这是一个仅使用 Windows 自带 CMD 与 Windows PowerShell 的轻量应用 Gateway。它为本次启动的应用进程设置本地代理环境，不修改 Windows 系统代理，也不永久写入用户或系统环境变量。
+Codex Gateway is a lightweight, application-scoped proxy launcher using only the CMD and Windows PowerShell built into Windows. It sets local proxy environment variables for the launched process without changing Windows system proxy settings or permanently modifying user/system environment variables.
 
-项目最初为 v2rayN 编写，因此保留了仓库名、BAT 文件名和启动器名称以兼容现有安装；Gateway 现在也支持 Clash、Mihomo、Clash Verge Rev 等提供本地 SOCKS5 或 mixed inbound 的客户端。
+Originally built for v2rayN, it retains the repository name, BAT name, and launcher name for compatibility. It now also supports Clash, Mihomo, Clash Verge Rev, and other local clients exposing a SOCKS5 or mixed inbound.
 
-默认应用仍然是 ChatGPT / Codex。现在也可以在设置中通过 `.exe` 路径添加其他 Windows 应用，并将其中任意一个设为默认应用。
+The built-in default application is ChatGPT / Codex. You can add other Windows applications by their `.exe` paths and select any of them as the default.
 
-## 日常启动
+## Daily Launch
 
-双击 **Codex Gateway - v2rayN** 或运行：
+Double-click **Codex Gateway - v2rayN**, or run:
 
 ```bat
 Codex-v2rayN.bat
 ```
 
-启动后会显示一个简短的等待入口，默认时长为 2 秒：
+By default, a short two-second launch prompt appears:
 
 ```text
 [S] Settings    [Enter] Launch now
 Auto launch in 2 seconds...
 ```
 
-- 等待期间按 `S`：进入设置模式。
-- 等待期间按 `Enter`：跳过等待，立即启动默认应用。
-- 不按任何键：倒计时结束后自动启动默认应用。
-- 非交互终端无法读取快捷键时：直接启动，不额外等待。
+- Press `S` to enter Settings.
+- Press `Enter` to skip the countdown and launch the default app immediately.
+- Press nothing to launch it when the countdown ends.
+- In a noninteractive terminal, launch immediately without waiting for keyboard input.
 
-平时无需选择应用。Gateway 会记住默认应用，只有按 `S` 或主动运行 `--settings` 时才进入设置。
+The Gateway remembers your default app, so normal launches require no app selection. Use `S` or `--settings` to change settings.
 
-## 终端界面
+## Terminal Interface
 
-Gateway 使用可重绘的自适应居中面板：宽窗口中保持紧凑的信息宽度，窄窗口中自动缩小。调整 Windows Terminal 的窗口宽度后，当前画面会按新宽度重新排版，而不是停留在输出时的位置。启动快捷键等待页和错误关闭页会即时响应缩放；检查或启动期间会在下一条状态更新时响应；设置输入期间也会持续检测缩放。标题、代理路由摘要和最终状态居中；步骤、路径与设置项在面板内部左对齐，便于快速扫描。中文全角字符会按双列宽度计算，因此中英文切换不会造成标题偏移或边框错位。
+Gateway uses a centered, responsive terminal panel. It maintains a compact reading width in wide windows and contracts in narrow ones. Resizing Windows Terminal reflows the current screen: the launch prompt and closing error screen respond immediately, checking/launching views update on the next status event, and the settings interface continues monitoring resizes.
 
-界面只使用 Windows 终端自带颜色和 Unicode 线条，不包含动画，也不需要字体或其他第三方依赖。若旧版控制台无法显示 Unicode 线条，建议使用 Windows Terminal 或 Windows 11 默认终端。
+Titles, proxy-route summaries, and final status are centered; steps, paths, and settings align left within the panel. Full-width Chinese characters are counted as two columns, keeping alignment consistent between Chinese and English.
 
-## 设置模式
+The UI uses only built-in terminal colors and Unicode box-drawing characters. It has no animations, additional fonts, or third-party UI dependencies. Use Windows Terminal or the Windows 11 default terminal if an older console cannot display Unicode lines.
 
-可以在启动等待期间按 `S`，也可以直接运行：
+## Settings
+
+Press `S` during the launch prompt, or run:
 
 ```bat
 Codex-v2rayN.bat --settings
 ```
 
-设置界面支持：
+Available controls:
 
-- 通过数字将某个应用设为默认应用。
-- 按 `A`，通过 `.exe` 文件路径添加应用。
-- 按 `E`，修改自定义应用的名称、路径、参数或工作目录。
-- 按 `D`，删除自定义应用。
-- 按 `L`，在简体中文与 English 之间切换界面语言。
-- 按 `T`，设置启动等待时长，单位为秒；允许 `0`–`60`，`0` 表示立即启动。
-- 按 `P`，在自动检测代理端口与手动指定端口之间切换。
-- 按 `Enter`，保存设置并启动当前默认应用。
-- 按 `Q`，保存设置并退出，不启动应用。
+- Number keys: select a default application
+- `A`: add an application by its `.exe` path
+- `E`: edit a custom app's name, path, arguments, or working directory
+- `D`: delete a custom application
+- `L`: switch between Simplified Chinese and English
+- `T`: configure the launch delay in seconds (`0`–`60`; `0` launches immediately)
+- `P`: switch between automatic proxy-port discovery and a manually configured port
+- `Enter`: save settings and launch the default app
+- `Q`: save settings and exit without launching
 
-内建的 `ChatGPT / Codex` Profile 不可删除。自定义应用配置保存在：
+The built-in `ChatGPT / Codex` profile cannot be deleted.
+
+Custom application settings are stored at:
 
 ```text
 %LOCALAPPDATA%\CodexGateway\apps.json
 ```
 
-每次覆盖配置前会保留一个 `apps.json.bak`。配置与项目脚本分离，因此解压或升级 Gateway 不会覆盖用户的应用列表。
+An `apps.json.bak` backup is retained before overwriting settings. Because configuration lives outside the project folder, unpacking or upgrading Gateway does not overwrite the saved app list.
 
-等待时长也保存在这个配置文件中。旧版 `apps.json` 没有该字段时会自动采用 2 秒，无需手动迁移。设置为 `0` 后仍可通过 `Codex-v2rayN.bat --settings` 再次进入设置。
+The launch delay is stored in the same file. Existing `apps.json` files without a delay automatically use two seconds. Even if the delay is set to zero, `--settings` remains available.
 
-## 语言选择
+## Language Selection
 
-Gateway 内置两种界面语言：
+Gateway includes two UI languages:
 
-- 简体中文：`zh-CN`
-- English：`en-US`
+- Simplified Chinese: `zh-CN`
+- English: `en-US`
 
-首次运行跟随 Windows UI 语言；非中文系统默认使用 English。进入设置后按 `L` 可随时切换，选择会写入 `apps.json`，之后启动自动沿用，不会每次询问。
+The first run follows the Windows UI language; non-Chinese systems default to English. Press `L` in Settings to switch languages. The choice persists in `apps.json` and is reused automatically.
 
-启动快捷键、设置菜单、三阶段状态、成功提示和主要错误原因都会随语言切换。包名、路径、协议名和底层 Windows/PowerShell 异常保留原始技术文本，方便排查。
+Launch prompts, settings, three-stage status views, success messages, and major error messages follow the selected language. Package names, paths, protocol names, and underlying Windows/PowerShell error text remain unchanged for troubleshooting.
 
-## 添加自定义应用
+## Add a Custom Application
 
-在设置中按 `A`，然后粘贴 `.exe` 的完整路径。路径可以包含空格、括号和非 ASCII 字符，也可以把 EXE 文件拖入终端窗口。
+Press `A` in Settings and paste a full `.exe` path. Paths may contain spaces, parentheses, and non-ASCII characters. You can also drag an executable into the terminal.
 
-每个自定义应用可以保存：
+Each custom application stores a display name, executable path, optional arguments, and optional working directory (defaults to the executable's directory).
 
-- 显示名称；
-- executable 路径；
-- 可选启动参数；
-- 可选工作目录，留空时使用 executable 所在目录。
+Before launching, Gateway verifies the executable and working directory, checks for another process using the same executable with `Get-CimInstance Win32_Process`, and verifies that the expected process appears after startup.
 
-Gateway 会在启动前确认文件和工作目录确实存在，通过 `Get-CimInstance Win32_Process` 检查相同 executable 是否已经运行，并在启动后确认匹配的进程真正出现。
+An existing process cannot inherit the proxy environment of this new launch. When the app is already running, Gateway asks you to close it instead of reusing it.
 
-已有实例无法继承本次创建的代理环境，因此检测到相同应用正在运行时，Gateway 会要求先关闭它，而不会复用现有进程。
+## Optional Proxy Argument Placeholders
 
-## 可选代理参数占位符
+Some applications honor `ALL_PROXY`, `HTTP_PROXY`, and `HTTPS_PROXY`; others require their own proxy command-line flags. Custom arguments support:
 
-有些应用会读取 `ALL_PROXY`、`HTTP_PROXY` 和 `HTTPS_PROXY`；有些应用则需要自己的命令行代理参数。自定义应用的启动参数支持：
-
-| 占位符 | 示例结果 |
+| Placeholder | Example substitution |
 |---|---|
 | `{proxy_host}` | `127.0.0.1` |
 | `{proxy_port}` | `10808` |
 | `{socks_proxy}` | `socks5://127.0.0.1:10808` |
 | `{http_proxy}` | `http://127.0.0.1:10808` |
 
-示例：
+Example:
 
 ```text
 --proxy-server={socks_proxy}
 ```
 
-Gateway 会在启动前使用实际检测到的 endpoint 替换这些占位符。参数内容不会显示在正常启动界面，也不会写入日志。不要把密码、token 或其他秘密直接写入应用参数配置。
+The placeholders resolve to the actual detected endpoint before launch. Argument contents are not displayed during normal startup or written to logs. Do not store passwords, tokens, or other secrets in application arguments.
 
-环境变量和命令行参数是否生效最终取决于目标应用自身的代理支持；Gateway 不会注入或修改第三方应用代码。
+Whether proxy environment variables or command-line flags work depends on the target application's own support. Gateway does not inject or modify third-party application code.
 
-## ChatGPT / Codex 自动选择
+## Automatic ChatGPT / Codex Selection
 
-内建 Codex Profile 保留原有动态逻辑：
+The built-in Codex profile retains its dynamic discovery:
 
-1. 默认优先查询 `OpenAI.CodexBeta`。
-2. Beta 未安装时自动回退 `OpenAI.Codex` Stable。
-3. 使用 `Get-AppxPackage` 获取当前包，不绑定版本目录。
-4. 优先从 AppX Manifest 获取真实 executable。
-5. Manifest 不可用时检查 `app\ChatGPT (Beta).exe` 或 `app\ChatGPT.exe` fallback。
+1. Prefer `OpenAI.CodexBeta` by default.
+2. Fall back automatically to `OpenAI.Codex` Stable if Beta is absent.
+3. Query the installed package dynamically with `Get-AppxPackage`, without hardcoding a versioned directory.
+4. Prefer the actual executable declared by the AppX Manifest.
+5. If the Manifest cannot be used, check `app\ChatGPT (Beta).exe` or `app\ChatGPT.exe`.
 
-`GatewayConfig.ps1` 中的 `AppPreference` 支持：
+`AppPreference` in `GatewayConfig.ps1` supports:
 
-| 值 | 行为 |
+| Value | Behavior |
 |---|---|
-| `PreferBeta` | Beta 优先，不存在时使用 Stable。 |
-| `PreferStable` | Stable 优先，不存在时使用 Beta。 |
-| `BetaOnly` | 只允许 Beta。 |
-| `StableOnly` | 只允许 Stable。 |
+| `PreferBeta` | Beta first, then Stable |
+| `PreferStable` | Stable first, then Beta |
+| `BetaOnly` | Beta only |
+| `StableOnly` | Stable only |
 
-## 只检查，不启动
+## Check Without Launching
 
 ```bat
 Codex-v2rayN.bat --check
 ```
 
-`--check` 不显示启动快捷键入口，也不会启动应用。它检查：
+`--check` does not show the launch prompt or start an application. It checks the v2rayN SOCKS5 handshake, an HTTPS health-check destination through SOCKS5, the default application profile, the AppX package or custom executable, and whether executable/working-directory paths exist.
 
-- v2rayN SOCKS5 handshake；
-- 通过 SOCKS5 到配置的 HTTPS 健康检查地址；
-- 当前默认应用配置；
-- AppX 包或自定义 executable；
-- executable 和工作目录是否存在。
+An OpenAI health-check response of HTTP `401` or `403` still confirms that the proxy, TLS, and remote server are reachable. Gateway does not send API keys, tokens, or cookies.
 
-OpenAI 健康检查返回 HTTP `401` 或 `403` 仍代表代理、TLS 和目标服务器可达；Gateway 不发送 API key、token 或 cookie。
+## Proxy Scope
 
-## 代理作用域
-
-mixed inbound 默认设置：
+For a mixed inbound, the default environment is:
 
 ```text
 ALL_PROXY=socks5://127.0.0.1:10808
@@ -163,31 +156,31 @@ NO_PROXY=localhost,127.0.0.1,::1
 no_proxy=localhost,127.0.0.1,::1
 ```
 
-这些变量只存在于 Gateway PowerShell 进程及它启动的子进程中。项目不使用 `setx`，不修改 Windows 系统代理，不写注册表代理配置，也不会影响其他终端或应用。
+These variables exist only in the Gateway PowerShell process and its child processes. Gateway does not use `setx`, alter Windows system proxy settings, write registry proxy configuration, or affect unrelated terminals/applications.
 
-## Endpoint 自动发现
+## Automatic Endpoint Discovery
 
-Gateway 按以下顺序查找本地 endpoint：
+Gateway discovers local endpoints in this order:
 
-1. 从运行中的 `v2rayN.exe`、`sing-box` 或 `xray` 定位 v2rayN 根目录。
-2. 检查 `binConfigs\config.json` runtime inbound。
-3. 检查 `guiConfigs\guiNConfig.json` GUI inbound。
-4. 检查 Mihomo/Clash YAML 或 JSON 中的顶层 `mixed-port` 与 `socks-port`。
-5. 识别 Clash、Mihomo、Clash Verge 相关进程；运行时探测少量常用端口 `7890`、`7891`、`7897`、`7898`。
-6. 检查当前 Gateway 进程继承到的 loopback `ALL_PROXY`、`HTTPS_PROXY` 或 `HTTP_PROXY`，仅接受通过 SOCKS5 握手的端口。
-7. 使用 `GatewayConfig.ps1` 中的 fallback：`127.0.0.1:10808`。
+1. Locate the v2rayN root from running `v2rayN.exe`, `sing-box`, or `xray` processes.
+2. Check the runtime inbound in `binConfigs\config.json`.
+3. Check the GUI inbound in `guiConfigs\guiNConfig.json`.
+4. Check top-level `mixed-port` and `socks-port` in Mihomo/Clash YAML or JSON.
+5. Recognize Clash/Mihomo/Clash Verge processes and probe a small set of common ports: `7890`, `7891`, `7897`, `7898`.
+6. Check inherited loopback `ALL_PROXY`, `HTTPS_PROXY`, and `HTTP_PROXY`, accepting only ports that pass a SOCKS5 handshake.
+7. Use the `GatewayConfig.ps1` fallback: `127.0.0.1:10808`.
 
-候选地址只接受 loopback。Gateway 会执行真实 SOCKS5 handshake，并探测同一端口是否支持 HTTP CONNECT，以识别 mixed inbound。
+Only loopback addresses are accepted. Gateway performs a real SOCKS5 handshake and checks whether the same port supports HTTP CONNECT to identify a mixed inbound.
 
-默认使用自动检测。设置界面按 `P` 后可以输入 `1`–`65535` 之间的端口，将 Gateway 固定到 `127.0.0.1:<端口>`；输入 `auto` 可恢复自动检测。手动模式不会在失败时偷偷回退到其他端口，因此报错中的地址就是实际检查的地址。
+Automatic discovery is the default. Press `P` in Settings to set a port from `1` to `65535`, pinned to `127.0.0.1:<port>`; enter `auto` to restore discovery. Manual mode does not secretly fall back to another port, so a reported failure always names the endpoint actually tested.
 
-自动检测并不是扫描全部 65535 个端口。Gateway 会读取客户端已经配置的 inbound，或在识别到相关进程后探测一小组常用端口，再逐个执行 SOCKS5 handshake。这种方式更快，也避免误连到无关的本地服务。
+Discovery does not scan all 65,535 ports. It reads configured inbounds or, when a compatible client process is detected, checks a small list of common ports and tests the candidates with SOCKS5 handshakes.
 
-Mihomo 官方配置中，`mixed-port` 同时支持 HTTP(S) 与 SOCKS5，`socks-port` 提供 SOCKS5。Gateway 当前要求目标端口至少支持 SOCKS5；只有 `port`（纯 HTTP）而没有 SOCKS/mixed inbound 的配置不会被选中。
+In Mihomo, `mixed-port` supports HTTP(S) and SOCKS5, while `socks-port` exposes SOCKS5. Gateway requires at least SOCKS5 support; a `port`-only, HTTP-only configuration is not selected.
 
-## 可调整配置
+## Administrator Configuration
 
-`GatewayConfig.ps1` 包含少量管理员级配置：
+`GatewayConfig.ps1` exposes a few advanced settings:
 
 ```powershell
 AppPreference        = 'PreferBeta'
@@ -196,105 +189,105 @@ DefaultProxyPort     = 10808
 LaunchTimeoutSeconds = 15
 ```
 
-一般用户不需要编辑该文件。应用列表和默认应用请通过设置界面管理。
+Most users should manage the application list and default app through Settings instead of editing this file.
 
-## 安装启动器
+## Install Launcher Shortcuts
 
-桌面快捷方式：
+Desktop shortcut:
 
 ```bat
 Install-Launcher.bat
 ```
 
-开始菜单快捷方式：
+Start Menu shortcut:
 
 ```bat
 Install-Launcher.bat --start-menu
 ```
 
-快捷方式名仍为 **Codex Gateway - v2rayN**，目标始终是当前目录中的 `Codex-v2rayN.bat`，不会绑定某个具体应用或 executable。
+The shortcut remains named **Codex Gateway - v2rayN** and points to `Codex-v2rayN.bat` in the current directory, never to a specific target application or executable.
 
-卸载桌面快捷方式：
+Remove the desktop shortcut:
 
 ```bat
 Install-Launcher.bat --uninstall
 ```
 
-卸载开始菜单快捷方式：
+Remove the Start Menu shortcut:
 
 ```bat
 Install-Launcher.bat --start-menu --uninstall
 ```
 
-卸载快捷方式不会删除应用配置、日志、项目、v2rayN 或任何目标应用。
+Removing shortcuts does not delete application configuration, logs, the project, v2rayN, or any launched application.
 
-## 文件结构
+## File Layout
 
-| 文件 | 职责 |
+| File | Responsibility |
 |---|---|
-| `Codex-v2rayN.bat` | 薄入口：处理 `--check`、`--settings` 并调用 PowerShell。 |
-| `Launch-CodexApp.ps1` | 快捷键入口、设置 UI、三阶段检查、启动与日志。 |
-| `AppProfileSupport.ps1` | 用户应用配置、路径解析、自定义进程识别和参数占位符。 |
-| `LocalizationSupport.ps1` | 语言检测、UTF-8 locale 加载和文本格式化。 |
-| `locales\zh-CN.json` | 简体中文界面资源。 |
-| `locales\en-US.json` | English 界面资源。 |
-| `AppSupport.ps1` | Codex AppX、Manifest 和 WindowsApps 进程识别。 |
-| `GatewayConfig.ps1` | endpoint、超时和 Codex 策略。 |
-| `Resolve-v2rayNProxy.ps1` | 自动解析 v2rayN endpoint。 |
-| `ProxySupport.ps1` | SOCKS5、mixed 和 TLS 检查。 |
-| `Install-Launcher.bat/.ps1` | 安装与卸载快捷方式。 |
-| `VERSION` | Gateway 版本。 |
-| `assets\` | 图标资源。 |
-| `tests\` | PowerShell 回归测试。 |
+| `Codex-v2rayN.bat` | Thin entry point for `--check`, `--settings`, and PowerShell |
+| `Launch-CodexApp.ps1` | Launch hotkey prompt, settings UI, three-stage checks, process launch, and logging |
+| `AppProfileSupport.ps1` | User app configuration, path resolution, process detection, and argument placeholders |
+| `LocalizationSupport.ps1` | Language detection, UTF-8 locale loading, and text formatting |
+| `locales\zh-CN.json` | Simplified Chinese UI resources |
+| `locales\en-US.json` | English UI resources |
+| `AppSupport.ps1` | Codex AppX, Manifest, and WindowsApps process detection |
+| `GatewayConfig.ps1` | Endpoint, timeouts, and Codex selection policy |
+| `Resolve-v2rayNProxy.ps1` | v2rayN endpoint discovery |
+| `ProxySupport.ps1` | SOCKS5, mixed inbound, and TLS checks |
+| `Install-Launcher.bat/.ps1` | Install/remove shortcuts |
+| `VERSION` | Gateway version |
+| `assets\` | Icon assets |
+| `tests\` | PowerShell regression tests |
 
-## 日志
+## Logs
 
 ```text
 logs\gateway-YYYY-MM-DD.log
 ```
 
-日志记录版本、模式、默认应用名称和类型、endpoint、最终 executable、启动结果和错误信息。不会记录完整环境变量、应用参数内容、token、API key、cookie 或密码。
+Logs record version, operating mode, default app name/type, endpoint, final executable, launch result, and errors. They do **not** record complete environment variables, application arguments, tokens, API keys, cookies, or passwords.
 
-## 常见问题
+## Troubleshooting
 
-### v2rayN 未启动或端口改变
+### v2rayN is stopped or its port changed
 
-先启动 v2rayN 并确认 core 正常。Gateway 会自动读取运行配置；无法定位配置时使用 `GatewayConfig.ps1` 中的 fallback。错误会显示实际 endpoint 和检测来源。
+Launch v2rayN and verify that its core is running. Gateway tries to read the runtime configuration and falls back to `GatewayConfig.ps1` when the configuration cannot be found. Errors display the endpoint and discovery source.
 
-### 应用已经运行
+### The application is already running
 
-完全关闭该应用的现有实例再重试。已运行的进程无法继承本次 Gateway 环境，所以不会被直接复用。
+Exit existing instances fully and retry. Existing processes cannot inherit the new Gateway environment.
 
-### 自定义应用启动了但没有使用代理
+### The custom application launches without a proxy
 
-确认目标应用是否支持 `ALL_PROXY`、`HTTP_PROXY` 或 `HTTPS_PROXY`。如果它要求自己的代理参数，请在设置中加入 `{socks_proxy}` 或 `{http_proxy}` 占位符。部分应用可能完全忽略环境变量和命令行代理选项。
+Check whether it supports `ALL_PROXY`, `HTTP_PROXY`, or `HTTPS_PROXY`. If it requires a command-line flag, add `{socks_proxy}` or `{http_proxy}` to its configured arguments. Some applications ignore both environment variables and command-line proxy options.
 
-### 自定义 EXE 被移动或卸载
+### Custom executable moved or uninstalled
 
-启动时会显示不存在的实际路径。按 `S` 进入设置，使用 `E` 更新路径，或使用 `D` 删除该应用。
+The missing path is reported during launch. Press `S` to open Settings, then `E` to update the path or `D` to remove the app.
 
-### 用户应用配置损坏
+### Application configuration is corrupted
 
-配置错误会显示 `%LOCALAPPDATA%\CodexGateway\apps.json` 的具体原因。可以恢复同目录的 `apps.json.bak`；也可以删除损坏的 JSON，让 Gateway 回到默认 Codex Profile。
+Errors identify the problem in `%LOCALAPPDATA%\CodexGateway\apps.json`. Restore `apps.json.bak` from the same directory, or delete the invalid JSON to return to the default Codex profile.
 
-### Beta 和 Stable 都未安装
+### Neither Beta nor Stable is installed
 
-内建 Codex Profile 会返回 AppX 错误。可以安装 `OpenAI.CodexBeta`/`OpenAI.Codex`，或者按 `S` 添加其他 EXE 并设为默认应用。
+The built-in profile reports an AppX error. Install `OpenAI.CodexBeta` or `OpenAI.Codex`, or press `S` to add another executable and make it the default.
 
-## Exit code
+## Exit Codes
 
-| Code | 含义 |
+| Code | Meaning |
 |---:|---|
-| `0` | 启动、检查或设置退出成功。 |
-| `1` | endpoint 或 SOCKS5 handshake 失败。 |
-| `2` | Codex AppX 包不可用。 |
-| `3` | executable 或工作目录不可用。 |
-| `4` | 应用已经运行，或无法安全检查进程。 |
-| `5` | `Start-Process` 失败。 |
-| `6` | 启动后未观察到目标进程。 |
-| `7` | HTTPS 健康检查失败。 |
-| `8` | 日志不可写。 |
-| `9` | Gateway 管理配置无效。 |
-| `10` | 未预期错误。 |
-| `11` | 用户应用 JSON 配置无效。 |
-| `64` | BAT 参数错误。 |
+| `0` | Launch, check, or settings exit succeeded |
+| `1` | Endpoint or SOCKS5 handshake failed |
+| `2` | Codex AppX package unavailable |
+| `3` | Executable or working directory unavailable |
+| `4` | Application already running or process safety check failed |
+| `5` | `Start-Process` failed |
+| `6` | Target process not observed after launch |
+| `7` | HTTPS health check failed |
+| `8` | Cannot write logs |
+| `9` | Invalid Gateway administrator configuration |
+| `10` | Unexpected error |
+| `11` | Invalid user application JSON configuration |
+| `64` | Invalid BAT arguments |
